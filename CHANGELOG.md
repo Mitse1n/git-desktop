@@ -14,6 +14,7 @@ Notable changes are recorded here. The project is in early development; the app 
 ### Fixed
 
 - Reduce branch, tag, and Log filter latency by querying only filtered history and waking immediately when Git exits. Explicit and background refreshes continue to update the full repository state.
+- Load the bundled app icon explicitly at launch so the Dock does not retain a generic placeholder.
 
 ### Changed
 

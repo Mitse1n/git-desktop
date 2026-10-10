@@ -5,6 +5,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   let controller = RepositoryController()
   var titlebarControls: NSTitlebarAccessoryViewController!
   func applicationDidFinishLaunching(_ notification: Notification) {
+    if let iconURL = Bundle.main.url(forResource: "GitDesk", withExtension: "icns"),
+      let icon = NSImage(contentsOf: iconURL)
+    {
+      NSApp.applicationIconImage = icon
+    }
     NSApp.appearance = NSAppearance(named: .darkAqua)
     makeMenu()
     window = NSWindow(
