@@ -118,6 +118,13 @@ public struct GraphEdge {
   public let to: Int
   public let color: Int
 }
+public struct GraphSegment {
+  public let fromLane: Double
+  public let fromY: Double
+  public let toLane: Double
+  public let toY: Double
+  public let color: Int
+}
 public struct GraphRow {
   public let lane: Int
   public let color: Int
@@ -125,9 +132,22 @@ public struct GraphRow {
   public let laneCount: Int
   public let isMerge: Bool
   public let incoming: Bool
+  public let incomingEdges: [GraphEdge]
+  // Coordinates are normalized to the row: bottom = 0, node = 0.5, top = 1.
+  // Split center-to-center connections at the shared row boundary, so diagonal
+  // edges join the node rather than turning half a row before reaching it.
+  public var segments: [GraphSegment] {
+    incomingEdges.map { edge in
+      GraphSegment(fromLane: Double(edge.from + edge.to) / 2, fromY: 1,
+        toLane: Double(edge.to), toY: 0.5, color: edge.color)
+    } + edges.map { edge in
+      GraphSegment(fromLane: Double(edge.from), fromY: 0.5,
+        toLane: Double(edge.from + edge.to) / 2, toY: 0, color: edge.color)
+    }
+  }
 }
 public enum CommitGraph {
-  public static func layout(_ commits: [Commit], ancestry: [Commit] = []) -> [GraphRow] {
+  public static func layout(_ commits: [Commit], ancestry: [Commit] = [], heads: [String] = []) -> [GraphRow] {
     let visible = Set(commits.map(\.hash))
     let parentsByHash = Dictionary(
       (ancestry.isEmpty ? commits : ancestry).map { ($0.hash, $0.parents) },
@@ -148,41 +168,96 @@ public enum CommitGraph {
       }
       return result
     }
-    var lanes: [(hash: String, color: Int)] = []
-    var nextColor = 0
-    return commits.map { commit in
-      let parents = projectedParents(commit)
-      let incoming = lanes.contains { $0.hash == commit.hash }
-      let lane: Int
-      if let existing = lanes.firstIndex(where: { $0.hash == commit.hash }) {
-        lane = existing
-      } else {
-        lane = lanes.count
-        lanes.append((commit.hash, nextColor))
-        nextColor += 1
-      }
-      let before = lanes
-      let color = lanes[lane].color
-      lanes.remove(at: lane)
-      for (i, parent) in parents.enumerated() where !lanes.contains(where: { $0.hash == parent }) {
-        let c = i == 0 ? color : nextColor
-        if i > 0 { nextColor += 1 }
-        lanes.insert((parent, c), at: min(lane + i, lanes.count))
-      }
-      var edges: [GraphEdge] = []
-      for (i, item) in before.enumerated() where item.hash != commit.hash {
-        if let to = lanes.firstIndex(where: { $0.hash == item.hash }) {
-          edges.append(GraphEdge(from: i, to: to, color: item.color))
-        }
-      }
-      for parent in parents {
-        if let to = lanes.firstIndex(where: { $0.hash == parent }) {
-          edges.append(GraphEdge(from: lane, to: to, color: lanes[to].color))
-        }
-      }
-      return GraphRow(
-        lane: lane, color: color, edges: edges, laneCount: max(before.count, lanes.count),
-        isMerge: commit.parents.count > 1, incoming: incoming)
+    // Assign stable ancestry order from branch tips before packing visible rows.
+    // A new head can then occupy the left lane instead of always being appended
+    // to the right of every older branch passing through the row.
+    let source = ancestry.isEmpty ? commits : ancestry
+    let sourceIndices = Dictionary(source.enumerated().map { ($0.element.hash, $0.offset) }, uniquingKeysWith: { a, _ in a })
+    let orderedParents = parentsByHash.mapValues { parents in
+      parents.filter { sourceIndices[$0] != nil }
     }
+    let ancestors = Set(source.flatMap(\.parents))
+    var ranks: [String: Int] = [:]
+    var nextRank = 0
+    for head in heads + source.filter({ !ancestors.contains($0.hash) }).map(\.hash) + source.map(\.hash) {
+      guard ranks[head] == nil, sourceIndices[head] != nil else { continue }
+      var stack = [head]
+      while let hash = stack.last {
+        let firstVisit = ranks[hash] == nil
+        if firstVisit { ranks[hash] = nextRank }
+        if let parent = orderedParents[hash]?.first(where: { ranks[$0] == nil }) {
+          stack.append(parent)
+        } else {
+          if firstVisit { nextRank += 1 }
+          stack.removeLast()
+        }
+      }
+    }
+    struct Connection: Hashable { let from: Int; let to: Int }
+    struct Element {
+      let connection: Connection?
+      let rank: Int
+      let origin: Int
+      let destination: Int
+    }
+    let indices = Dictionary(commits.enumerated().map { ($0.element.hash, $0.offset) }, uniquingKeysWith: { a, _ in a })
+    let parents = commits.map { projectedParents($0).compactMap { indices[$0] } }
+    var active: [Connection] = []
+    var elements: [[Element]] = []
+    var positions: [[Connection: Int]] = []
+    var nodeLanes: [Int] = []
+    for (index, commit) in commits.enumerated() {
+      active.removeAll { $0.to <= index }
+      var row = active.map { edge in
+        Element(connection: edge,
+          rank: max(ranks[commits[edge.from].hash] ?? 0, ranks[commits[edge.to].hash] ?? 0),
+          origin: edge.from, destination: edge.to)
+      }
+      row.append(Element(connection: nil, rank: ranks[commit.hash] ?? 0, origin: index, destination: index))
+      row.sort {
+        if $0.rank != $1.rank { return $0.rank < $1.rank }
+        if $0.origin != $1.origin { return $0.origin < $1.origin }
+        return $0.destination < $1.destination
+      }
+      elements.append(row)
+      positions.append(Dictionary(uniqueKeysWithValues: row.enumerated().compactMap { offset, element in
+        element.connection.map { ($0, offset) }
+      }))
+      nodeLanes.append(row.firstIndex { $0.connection == nil }!)
+      active += parents[index].filter { $0 > index }.map { Connection(from: index, to: $0) }
+    }
+    var previousEdges: [GraphEdge] = []
+    return commits.indices.map { index in
+      var edges: [GraphEdge] = []
+      if index + 1 < commits.count {
+        for (position, element) in elements[index].enumerated() {
+          let connections = element.connection.map { [$0] } ?? parents[index].filter { $0 > index }.map { Connection(from: index, to: $0) }
+          for edge in connections {
+            let destination = edge.to == index + 1 ? nodeLanes[index + 1] : positions[index + 1][edge]
+            if let destination {
+              edges.append(GraphEdge(from: position, to: destination, color: ranks[commits[edge.to].hash] ?? 0))
+            }
+          }
+        }
+      }
+      let row = GraphRow(lane: nodeLanes[index], color: ranks[commits[index].hash] ?? 0,
+        edges: edges, laneCount: max(elements[index].count, index + 1 < commits.count ? elements[index + 1].count : 0),
+        isMerge: commits[index].parents.count > 1,
+        incoming: previousEdges.contains { $0.to == nodeLanes[index] }, incomingEdges: previousEdges)
+      previousEdges = edges
+      return row
+    }
+  }
+
+  public static func recommendedLaneCount(_ rows: [GraphRow]) -> Int {
+    guard !rows.isEmpty else { return 2 }
+    var weight = 0.0, total = 0.0, squares = 0.0
+    for (index, row) in rows.prefix(20_000).enumerated() {
+      let w = 1 - 0.9 * Double(index) / Double(max(1, min(rows.count, 20_000) - 1))
+      let lanes = Double(row.laneCount)
+      weight += w; total += lanes * w; squares += lanes * lanes * w
+    }
+    let average = total / weight
+    return max(2, Int((average + sqrt(max(0, squares / weight - average * average))).rounded()))
   }
 }

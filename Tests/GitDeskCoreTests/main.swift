@@ -101,6 +101,8 @@ for (name, body) in cases {
   print((failures.count == start ? "PASS " : "FAIL ") + name)
 }
 let diffCases: [(String, () -> Void)] = [
+  ("Graph branch order and disconnected heads", { DiffAndGraphTests().testGraphBranchOrderAndDisconnectedHeads() }),
+  ("Graph connections meet commit centers", { DiffAndGraphTests().testGraphConnectionsMeetCommitCenters() }),
   ("Filtered graph ancestry", { DiffAndGraphTests().testFilteredGraphProjectsHiddenAncestors() }),
   ("Line alignment", { DiffAndGraphTests().testLineAlignmentAndNumbers() }),
   ("Deleted and empty files", { DiffAndGraphTests().testDeletionAndEmptyFiles() }),

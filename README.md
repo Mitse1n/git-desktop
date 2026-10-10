@@ -19,7 +19,7 @@ GitDesk brings commit history, branches, selected-file commits, and diffs into o
 
 ## Features
 
-- **History:** colored commit graph, branch and tag decorations, text/hash search, regex and case options, branch/author/date/path filters, and first-parent history.
+- **History:** colored commit graph with ancestry-ordered tracks and connections meeting commit centers, branch and tag decorations, text/hash search, regex and case options, branch/author/date/path filters, and first-parent history.
 - **History actions:** undo the latest commit while preserving local/index changes, edit latest or earlier messages, parent/child navigation, patch export, and a read-only repository snapshot browser. A native interactive rebase editor supports reorder, pick, reword, squash, fixup, and drop.
 - **Branches:** grouped local/remote branches and tags, favorites, checkout, create, rename, delete, compare, merge, rebase, and worktrees.
 - **Commits:** grouped changes with inline directory names, click/Space inclusion with mixed group states, a resizable message area, stage/unstage, change previews, amend, message history, and commit and push. View options toggle directory names and file status; commit options set an optional author and sign-off trailer. Ordinary selected-file commits preserve unrelated staged changes using a temporary index.

@@ -424,4 +424,69 @@ final class DiffAndGraphTests {
     XCTAssertEqual(disconnected[1].lane, 0)
   }
 
+  func testGraphConnectionsMeetCommitCenters() {
+    // A short merged branch, as in new-api: the side commit is immediately
+    // below the merge and converges on the main lane at the common ancestor.
+    let commits = [
+      Commit(hash: "m", parents: ["a", "b"], author: "T", subject: "Merge"),
+      Commit(hash: "b", parents: ["a"], author: "T", subject: "Side"),
+      Commit(hash: "a", parents: ["r"], author: "T", subject: "Main"),
+      Commit(hash: "r", parents: [], author: "T", subject: "Root"),
+    ]
+    let rows = CommitGraph.layout(commits)
+    XCTAssertEqual(rows[1].lane, 1)
+    let departure = rows[0].segments.first { $0.toY == 0 && $0.toLane == 0.5 }
+    XCTAssertEqual(departure?.fromLane, 0)
+    XCTAssertEqual(departure?.fromY, 0.5)
+    let arrival = rows[1].segments.first { $0.fromY == 1 && $0.toLane == 1 }
+    XCTAssertEqual(arrival?.fromLane, 0.5)
+    XCTAssertEqual(arrival?.toY, 0.5)
+    let convergence = rows[2].segments.first { $0.fromY == 1 && $0.fromLane == 0.5 }
+    XCTAssertEqual(convergence?.toLane, 0)
+    XCTAssertEqual(convergence?.toY, 0.5)
+
+    for index in 1..<rows.count {
+      let previous = rows[index - 1].segments.filter { $0.toY == 0 }
+      let incoming = rows[index].segments.filter { $0.fromY == 1 }
+      XCTAssertEqual(previous.count, incoming.count)
+      for (outgoing, incoming) in zip(previous, incoming) {
+        XCTAssertEqual(outgoing.toLane, incoming.fromLane)
+        XCTAssertEqual(outgoing.color, incoming.color)
+      }
+      if rows[index].incoming {
+        XCTAssertTrue(incoming.contains { $0.toLane == Double(rows[index].lane) && $0.toY == 0.5 })
+      }
+    }
+    // Projecting away a side commit still meets the visible ancestor's center.
+    let filtered = CommitGraph.layout([commits[0], commits[2], commits[3]], ancestry: commits)
+    XCTAssertTrue(filtered[1].segments.contains { $0.fromY == 1 && $0.toLane == Double(filtered[1].lane) && $0.toY == 0.5 })
+  }
+
+  func testGraphBranchOrderAndDisconnectedHeads() {
+    // Same topology and branch-tip precedence as the reported new-api region.
+    let commits = [
+      Commit(hash: "merge-limits", parents: ["merge-privacy", "limits-1"], author: "T", subject: ""),
+      Commit(hash: "limits-1", parents: ["limits-2"], author: "T", subject: ""),
+      Commit(hash: "limits-2", parents: ["merge-privacy"], author: "T", subject: ""),
+      Commit(hash: "merge-privacy", parents: ["merge-profile", "privacy"], author: "T", subject: ""),
+      Commit(hash: "privacy", parents: ["merge-profile"], author: "T", subject: ""),
+      Commit(hash: "merge-profile", parents: ["merge-channel", "profile"], author: "T", subject: ""),
+      Commit(hash: "profile", parents: ["merge-channel"], author: "T", subject: ""),
+      Commit(hash: "merge-channel", parents: ["base", "channel"], author: "T", subject: ""),
+      Commit(hash: "channel", parents: ["base"], author: "T", subject: ""),
+      Commit(hash: "other-head", parents: ["root"], author: "T", subject: ""),
+      Commit(hash: "base", parents: ["root"], author: "T", subject: ""),
+      Commit(hash: "root", parents: [], author: "T", subject: ""),
+    ]
+    let heads = ["root", "other-head", "privacy", "limits-1", "profile", "channel", "merge-limits"]
+    let rows = CommitGraph.layout(commits, heads: heads)
+    XCTAssertEqual(Array(rows.prefix(9).map(\.lane)), [0, 0, 0, 0, 0, 0, 1, 0, 1])
+    XCTAssertFalse(rows[9].incoming)
+    XCTAssertEqual(rows[9].lane, 0)
+    let filtered = CommitGraph.layout(commits.filter { $0.hash != "other-head" }, ancestry: commits, heads: heads)
+    XCTAssertEqual(Array(filtered.prefix(9).map(\.lane)), Array(rows.prefix(9).map(\.lane)))
+    XCTAssertTrue(CommitGraph.recommendedLaneCount(rows) >= 2)
+    XCTAssertTrue(rows.flatMap(\.edges).allSatisfy { $0.from >= 0 && $0.to >= 0 })
+  }
+
 }

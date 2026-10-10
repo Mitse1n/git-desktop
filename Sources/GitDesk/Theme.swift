@@ -353,13 +353,36 @@ class MenuTable: NSTableView {
 /// Keep the message column flexible while reserving only the space metadata needs.
 final class LogTable: MenuTable {
   var graphWidth: CGFloat = 44
+  var graphLaneCounts: [Int] = []
   var authorWidth: CGFloat = 90
   private var fitting = false
+  private var scrollObserver: NSObjectProtocol?
+  override func viewDidMoveToWindow() {
+    super.viewDidMoveToWindow()
+    if let scrollObserver { NotificationCenter.default.removeObserver(scrollObserver) }
+    scrollObserver = nil
+    if window != nil, let clip = enclosingScrollView?.contentView {
+      clip.postsBoundsChangedNotifications = true
+      scrollObserver = NotificationCenter.default.addObserver(
+        forName: NSView.boundsDidChangeNotification, object: clip, queue: .main
+      ) { [weak self] _ in self?.fitColumns() }
+    }
+  }
+  deinit {
+    if let scrollObserver { NotificationCenter.default.removeObserver(scrollObserver) }
+  }
   func fitColumns() {
     guard !fitting, tableColumns.count == 4,
       let width = enclosingScrollView?.contentSize.width, width > 0 else { return }
     fitting = true
-    let widths = [graphWidth, max(100, width - graphWidth - authorWidth - 126), authorWidth, 126]
+    let visible = rows(in: visibleRect)
+    var requiredGraphWidth = graphWidth
+    if visible.location != NSNotFound, visible.location < graphLaneCounts.count {
+      let end = min(graphLaneCounts.count, visible.location + visible.length)
+      let lanes = graphLaneCounts[visible.location..<end].max() ?? 0
+      requiredGraphWidth = max(graphWidth, CGFloat(lanes) * 15 + 8)
+    }
+    let widths = [requiredGraphWidth, max(100, width - requiredGraphWidth - authorWidth - 126), authorWidth, 126]
     for (column, value) in zip(tableColumns, widths) where abs(column.width - value) > 0.5 {
       column.width = value
     }
@@ -485,35 +508,25 @@ final class GraphCell: NSView {
     guard let graph else { return }
     let h = bounds.height
     let middle = h / 2
-    func x(_ lane: Int) -> CGFloat { 16 + CGFloat(lane) * 15 }
-    if graph.incoming {
-      let top = NSBezierPath()
-      top.lineWidth = 1.6
-      top.move(to: NSPoint(x: x(graph.lane), y: h))
-      top.line(to: NSPoint(x: x(graph.lane), y: middle))
-      (primaryColor ?? Theme.graph[graph.color % Theme.graph.count]).setStroke()
-      top.stroke()
-    }
-    for edge in graph.edges {
+    func x(_ lane: Double) -> CGFloat { 16 + CGFloat(lane) * 15 }
+    for segment in graph.segments {
       let path = NSBezierPath()
       path.lineWidth = 1.6
-      path.move(to: NSPoint(x: x(edge.from), y: h))
-      if edge.from == graph.lane { path.move(to: NSPoint(x: x(edge.from), y: middle)) }
-      if edge.from != graph.lane { path.line(to: NSPoint(x: x(edge.from), y: middle)) }
-      path.line(to: NSPoint(x: x(edge.to), y: 0))
-      let color = edge.color == graph.color
-        ? outgoingColor ?? primaryColor ?? Theme.graph[edge.color % Theme.graph.count]
-        : Theme.graph[edge.color % Theme.graph.count]
+      path.move(to: NSPoint(x: x(segment.fromLane), y: h * segment.fromY))
+      path.line(to: NSPoint(x: x(segment.toLane), y: h * segment.toY))
+      let color = segment.color == graph.color
+        ? (segment.toY == 0 ? outgoingColor : nil) ?? primaryColor ?? Theme.graph[segment.color % Theme.graph.count]
+        : Theme.graph[segment.color % Theme.graph.count]
       color.setStroke()
       path.stroke()
     }
     let color = primaryColor ?? Theme.graph[graph.color % Theme.graph.count]
     color.setFill()
-    NSBezierPath(ovalIn: NSRect(x: x(graph.lane) - 4, y: middle - 4, width: 8, height: 8)).fill()
+    NSBezierPath(ovalIn: NSRect(x: x(Double(graph.lane)) - 4, y: middle - 4, width: 8, height: 8)).fill()
     if isHead {
       color.setStroke()
       let ring = NSBezierPath(
-        ovalIn: NSRect(x: x(graph.lane) - 6, y: middle - 6, width: 12, height: 12))
+        ovalIn: NSRect(x: x(Double(graph.lane)) - 6, y: middle - 6, width: 12, height: 12))
       ring.lineWidth = 1.5
       ring.stroke()
     }

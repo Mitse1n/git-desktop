@@ -779,8 +779,18 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     operationLabel.stringValue = (data.operation?.capitalized ?? "") + " in progress"
     operationControls.arrangedSubviews[3].isHidden = data.operation != "rebase"
     let selectedHash = selectedCommit?.hash
-    graphs = CommitGraph.layout(data.commits, ancestry: data.history)
-    logTable.graphWidth = CGFloat(min(10, max(2, graphs.map(\.laneCount).max() ?? 2))) * 15 + 8
+    let graphHeads = data.branches.sorted {
+      func priority(_ branch: Branch) -> Int {
+        if branch.kind == .local && ["main", "master"].contains(branch.name) { return 0 }
+        if branch.kind == .remote && ["main", "master"].contains(String(branch.name.split(separator: "/").last ?? "")) { return 1 }
+        if branch.kind == .local { return 2 }
+        return branch.kind == .remote ? 3 : 4
+      }
+      return priority($0) == priority($1) ? $0.name < $1.name : priority($0) < priority($1)
+    }.map(\.hash)
+    graphs = CommitGraph.layout(data.commits, ancestry: data.history, heads: graphHeads)
+    logTable.graphLaneCounts = graphs.map(\.laneCount)
+    logTable.graphWidth = CGFloat(min(10, CommitGraph.recommendedLaneCount(graphs))) * 15 + 8
     logTable.authorWidth = min(140, max(80, data.commits.map {
       ($0.author as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 13, weight: .semibold)]).width + 12
     }.max() ?? 80))
@@ -797,7 +807,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     var mainHistory = Set<String>()
     var cursor = data.branches.first { $0.kind == .local && ["main", "master"].contains($0.name) }?.hash
     while let hash = cursor, mainHistory.insert(hash).inserted { cursor = ancestry[hash]?.parents.first }
-    let historyGraphs = CommitGraph.layout(data.history)
+    let historyGraphs = CommitGraph.layout(data.history, heads: graphHeads)
     let historyColors = Dictionary(zip(data.history.map(\.hash), historyGraphs.map(\.color)), uniquingKeysWith: { first, _ in first })
     let mainGraphColor = data.history.first { mainHistory.contains($0.hash) }.flatMap { historyColors[$0.hash] }
     displayGraphColors = data.commits.enumerated().map { index, commit in
