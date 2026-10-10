@@ -76,8 +76,11 @@ extension RepositoryController {
         menuItem("Continue \(operation)") { [weak self] in self?.continueOperation(operation) })
       menu.addItem(
         menuItem("Abort \(operation)") { [weak self] in
-          self?.perform("Abort \(operation)", work: { try $0.run([operation, "--abort"]) })
+          self?.abortHistoryOperation(operation)
         })
+    }
+    if snapshot?.operation == "rebase" {
+      menu.addItem(menuItem("Skip Current Rebase Commit…") { [weak self] in self?.skipRebaseCommit() })
     }
     menu.addItem(
       menuItem("Show in Finder", enabled: repository != nil) { [weak self] in
@@ -314,8 +317,15 @@ extension RepositoryController {
         NSPasteboard.general.setString(
           commit.subject + (commit.body.isEmpty ? "" : "\n\n" + commit.body), forType: .string)
       })
+    let single = logTable.selectedRowIndexes.count == 1
+    let idle = !isBusy && snapshot?.operation == nil
+    let onBranch = snapshot?.branches.contains(where: \.current) == true
+    let head = snapshot?.branches.first(where: \.current)?.hash
+    let editable = single && idle && onBranch && currentBranchHistory.contains(commit.hash)
+    menu.addItem(menuItem("Create Patch…", enabled: single && !isBusy) { [weak self] in self?.createHistoryPatch(commit) })
     menu.addItem(.separator())
     menu.addItem(menuItem("Show Diff") { [weak self] in self?.showDiff() })
+    menu.addItem(menuItem("Show Repository at Revision", enabled: single) { [weak self] in self?.showHistoryRepository(commit) })
     menu.addItem(
       menuItem("Compare with Local") { [weak self] in
         self?.compareRevisions(from: commit.hash, to: "HEAD", title: commit.shortHash + " ↔ HEAD")
@@ -329,6 +339,7 @@ extension RepositoryController {
           self?.compareRevisions(from: a.hash, to: b.hash, title: a.shortHash + " ↔ " + b.shortHash)
         })
     }
+    menu.addItem(.separator())
     menu.addItem(menuItem("New Branch…") { [weak self] in self?.newBranch(start: commit.hash) })
     menu.addItem(menuItem("New Tag…") { [weak self] in self?.newTag(commit) })
     menu.addItem(
@@ -339,6 +350,16 @@ extension RepositoryController {
     menu.addItem(menuItem("Cherry-Pick") { [weak self] in self?.commitAction("cherry-pick") })
     menu.addItem(menuItem("Revert Commit") { [weak self] in self?.commitAction("revert") })
     menu.addItem(menuItem("Reset Current Branch to Here…") { [weak self] in self?.resetTo(commit) })
+    menu.addItem(menuItem("Undo Commit…", enabled: editable && head == commit.hash) { [weak self] in self?.undoHistoryCommit(commit) })
+    menu.addItem(.separator())
+    menu.addItem(menuItem("Edit Commit Message…", enabled: editable && (commit.parents.count <= 1 || head == commit.hash)) { [weak self] in self?.editHistoryMessage(commit) })
+    menu.addItem(menuItem("Fixup…", enabled: editable && commit.parents.count == 1) { [weak self] in self?.startHistoryRebase(commit, action: .fixup) })
+    menu.addItem(menuItem("Squash Into…", enabled: editable && commit.parents.count == 1) { [weak self] in self?.startHistoryRebase(commit, action: .squash) })
+    menu.addItem(menuItem("Drop Commit…", enabled: editable && commit.parents.count <= 1) { [weak self] in self?.startHistoryRebase(commit, action: .drop) })
+    menu.addItem(menuItem("Interactively Rebase from Here…", enabled: editable && commit.parents.count <= 1) { [weak self] in self?.startHistoryRebase(commit) })
+    menu.addItem(.separator())
+    menu.addItem(menuItem("Go to Child Commit", enabled: single && !isBusy) { [weak self] in self?.navigateHistory(commit, toParent: false) })
+    menu.addItem(menuItem("Go to Parent Commit", enabled: single && !isBusy && !commit.parents.isEmpty) { [weak self] in self?.navigateHistory(commit, toParent: true) })
     return menu
   }
   func commitAction(_ operation: String) {
@@ -647,7 +668,10 @@ extension RepositoryController {
     }
     perform(
       "Continue \(operation)",
-      work: { try $0.run(["-c", "core.editor=true", operation, "--continue"]) })
+      work: { repo in
+        if operation == "rebase" { try repo.resumeRebase("continue") }
+        else { try repo.run(["-c", "core.editor=true", operation, "--continue"]) }
+      })
   }
   func acceptConflict(_ side: String) {
     let files = workingSelection().filter(\.isConflicted)

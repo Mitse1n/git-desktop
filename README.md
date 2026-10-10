@@ -20,6 +20,7 @@ GitDesk brings commit history, branches, selected-file commits, and diffs into o
 ## Features
 
 - **History:** colored commit graph, branch and tag decorations, text/hash search, regex and case options, branch/author/date/path filters, and first-parent history.
+- **History actions:** undo the latest commit while preserving local/index changes, edit latest or earlier messages, parent/child navigation, patch export, and a read-only repository snapshot browser. A native interactive rebase editor supports reorder, pick, reword, squash, fixup, and drop.
 - **Branches:** grouped local/remote branches and tags, favorites, checkout, create, rename, delete, compare, merge, rebase, and worktrees.
 - **Commits:** select files, stage/unstage, preview changes, amend, reuse recent messages, and commit and push. Ordinary selected-file commits preserve unrelated staged changes using a temporary index.
 - **Diffs:** side-by-side and unified views, line numbers, change navigation, search, whitespace options, and basic syntax highlighting.
@@ -94,6 +95,16 @@ The demo includes branches, a merge, a tag, and uncommitted changes. An existing
 | `⌥⌘N` | New branch |
 | `⌘1` / `⌘2` | Log / Console |
 
+## Editing history
+
+Right-click a commit in Log to open the history actions. **Undo Commit** is available only for the current branch tip; it keeps the index and working files intact and restores the message in the Commit panel. **Edit Commit Message** on HEAD excludes unrelated staged files; earlier messages are changed through the rebase editor.
+
+The rebase editor lists the selected commit through HEAD, oldest first. Use **Move Up / Move Down** to reorder rows and select Pick, Reword, Squash, Fixup, or Drop. Squash and Fixup combine with the preceding retained row; use the message area for Reword or a custom Squash message. Leaving the Squash message automatic combines the messages. Invalid plans can be corrected without losing edits.
+
+Rebase requires a clean working tree, supports up to 10,000 commits, and rejects ranges containing merge commits. When conflicts pause an operation, the toolbar provides **Resolve Conflicts**, **Continue**, **Skip**, and **Abort**. Resolve and stage files before continuing. GitDesk keeps its message files in the worktree's Git directory so a paused rebase can continue after restarting the app. Rewriting history displays a warning when affected commits are reachable from local remote-tracking refs; this check does not fetch the server or implement hosting-provider branch protection. GitDesk does not force push.
+
+**Create Patch** exports a Git-format patch for a normal/root commit, and a binary-capable first-parent diff for a merge. **Show Repository at Revision** browses files without checking out the revision; text previews are read only, capped at 2 MB, and do not follow symlinks or open submodules.
+
 ## Development
 
 ```sh
@@ -117,7 +128,7 @@ GitHub Actions runs these checks and bundles the app on Apple Silicon and Intel 
 
 ## Current limits
 
-- Selected commits operate on whole files. Hunk/line staging, an interactive rebase editor, changelists/shelves, dedicated submodule/LFS management, signature verification, image diffs, and hosting-account integration are not implemented.
+- Selected commits operate on whole files. Hunk/line staging, changelists/shelves, dedicated submodule/LFS management, signature verification, image diffs, and hosting-account integration are not implemented.
 - Text conflict editing supports UTF-8 files; binary conflicts can use Accept Ours / Accept Theirs.
 - Diff previews are limited to a combined 2 MB and 20,000 lines. Individual file reads are capped at 2 MB. Git subprocesses time out after 120 seconds.
 - Git runs without interactive terminal input. Configure authentication before remote operations; failures appear in the UI/Console. Force push is not offered.

@@ -59,6 +59,14 @@ func XCTUnwrap<T>(_ value: @autoclosure () throws -> T?) throws -> T {
 }
 
 let cases: [(String, (GitRepositoryTests) throws -> Void)] = [
+  ("Undo and reword preserve local changes", { try $0.testUndoAndRewordPreserveLocalChanges() }),
+  ("Undo root and history guards", { try $0.testUndoRootAndHistoryGuards() }),
+  ("Revision tree and patch round trip", { try $0.testRevisionTreeAndPatch() }),
+  ("Rebase reorder, reword and drop", { try $0.testRebaseReorderRewordAndDrop() }),
+  ("Rebase squash, fixup and root", { try $0.testRebaseSquashFixupAndRoot() }),
+  ("Rebase conflict recovery", { try $0.testRebaseConflictRecovery() }),
+  ("Automatic squash, drop all and stale session", { try $0.testAutomaticSquashDropAllAndStaleSession() }),
+  ("History plan validation and navigation", { try $0.testHistoryPlanValidationAndNavigation() }),
   ("Unborn repository and initial commit", { try $0.testUnbornRepositoryAndInitialCommit() }),
   ("Selected commit preserves staging", { try $0.testSelectedCommitPreservesUnrelatedStaging() }),
   ("Failed commit preserves index", { try $0.testFailedCommitPreservesIndexAndWorkingTree() }),

@@ -6,8 +6,12 @@ Notable changes are recorded here. The project is in early development; the app 
 
 ### Added
 
+- Commit context-menu actions for undo, latest/earlier message editing, parent/child navigation, patch export, and read-only historical repository browsing.
+- Native interactive rebase editor with reorder, pick, reword, squash, fixup, and drop; persistent messages and continue/skip/abort controls for paused operations.
+- History-edit validation and regression coverage for preserving unrelated staging, root commits, annotated/binary patches, file modes, quoted paths, and conflict recovery.
+
 - Native macOS Git client with history graph, branch management, selected-file commits, diffs, remotes, stash, and conflict tools.
-- Dependency-free regression executable covering 23 core Git, diff, and graph scenarios.
+- Dependency-free regression executable covering 31 core Git, diff, and graph scenarios.
 - English and Simplified Chinese documentation, MIT license, contribution and security policies, and GitHub issue and pull request templates.
 - macOS CI for regression checks, app packaging, signature verification, and downloadable development artifacts.
 

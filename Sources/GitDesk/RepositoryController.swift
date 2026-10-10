@@ -126,6 +126,9 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
   var watcher: Timer?
   var conflictWindows: [ConflictWindowController] = []
   var diffWindows: [DiffWindowController] = []
+  var revisionWindows: [RevisionBrowserWindowController] = []
+  var operationControls: NSStackView!
+  let operationLabel = label("Rebase paused", color: Theme.yellow, size: 12)
   let split = GitSplitView()
   let branchOutline = MenuOutline()
   let logTable = LogTable()
@@ -182,7 +185,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     buildUI()
     watcher = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
       guard let self, self.repository != nil, !self.isBusy, !self.isRefreshing, self.debounce == nil,
-        self.view.window?.attachedSheet == nil
+        self.view.window?.attachedSheet == nil, NSApp.modalWindow == nil
       else { return }
       self.refresh(silent: true)
     }
@@ -246,9 +249,21 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     commitTab = ActionButton("Commit") { [weak self] in self?.setMode("Commit") }
     for tab in [logTab, consoleTab, commitTab] { tab?.isTab = true }
     let tabSpacer = NSView()
+    operationControls = row([
+      operationLabel,
+      ActionButton("Resolve Conflicts") { [weak self] in self?.setMode("Commit") },
+      ActionButton("Continue") { [weak self] in
+        if let operation = self?.snapshot?.operation { self?.continueOperation(operation) }
+      },
+      ActionButton("Skip…") { [weak self] in self?.skipRebaseCommit() },
+      ActionButton("Abort…") { [weak self] in
+        if let operation = self?.snapshot?.operation { self?.abortHistoryOperation(operation) }
+      },
+    ], spacing: 6)
+    operationControls.isHidden = true
     let tabs = row(
       [
-        label("Git", bold: true), logTab, consoleTab, commitTab, tabSpacer,
+        label("Git", bold: true), logTab, consoleTab, commitTab, tabSpacer, operationControls,
         ActionButton(symbol: "arrow.clockwise", tooltip: "Refresh (⌘R)") { [weak self] in
           self?.refresh()
         },
@@ -873,6 +888,9 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
   }
   func updateUI() {
     guard let data = snapshot else { return }
+    operationControls.isHidden = data.operation == nil
+    operationLabel.stringValue = (data.operation?.capitalized ?? "") + " in progress"
+    operationControls.arrangedSubviews[3].isHidden = data.operation != "rebase"
     let selectedHash = selectedCommit?.hash
     graphs = CommitGraph.layout(data.commits, ancestry: data.history)
     logTable.graphWidth = CGFloat(min(10, max(2, graphs.map(\.laneCount).max() ?? 2))) * 15 + 8
@@ -930,6 +948,10 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
       })
     {
       branchPopup.selectItem(at: i)
+    } else if let branchSelection {
+      branchPopup.addItem(withTitle: String(branchSelection.prefix(8)))
+      branchPopup.lastItem?.representedObject = branchSelection
+      branchPopup.selectItem(at: branchPopup.numberOfItems - 1)
     }
     let selectedAuthor = filter.author
     userPopup.removeAllItems()

@@ -20,6 +20,7 @@
 ## 功能
 
 - **历史**：彩色提交图、分支和标签标记、消息/哈希搜索、正则与大小写选项、分支/作者/日期/路径筛选、first-parent 模式。
+- **历史操作**：撤销最新提交、修改最新或较早提交说明、父子提交跳转、补丁导出和只读历史文件树。原生交互式 rebase 编辑器支持排序、Pick、Reword、Squash、Fixup 和 Drop。
 - **分支**：本地/远程分支和标签分组、收藏、切换、新建、重命名、删除、比较、merge、rebase 和 worktree。
 - **提交**：按文件勾选、暂存/取消暂存、变更预览、amend、消息历史与 Commit and Push。普通选择文件提交通过临时 index 保留其他文件的暂存状态。
 - **差异**：双栏和 Unified、行号、差异导航、搜索、忽略空白和基础语法着色。
@@ -94,6 +95,16 @@ swift run GitDesk /tmp/gitdesk-demo
 | `⌥⌘N` | 新建分支 |
 | `⌘1` / `⌘2` | Log / Console |
 
+## 编辑提交历史
+
+在 Log 中右键提交即可使用这些操作。**Undo Commit** 仅对当前分支最后一次提交可用，保留暂存区和工作文件，并将提交说明回填到 Commit 面板。修改最新提交说明时不会把其他已暂存文件加入提交；修改较早说明通过 rebase 编辑器完成。
+
+编辑器按从旧到新的顺序列出所选提交直到 HEAD。用 **Move Up / Move Down** 调整顺序，选择 Pick、Reword、Squash、Fixup 或 Drop。Squash/Fixup 合并到前一个保留的条目；说明框可编辑 Reword 或自定义 Squash 说明，Squash 留空时自动合并原说明。无效计划会提示修正并保留编辑内容。
+
+Rebase 要求工作区干净，最多编辑 10,000 条提交，暂不支持含 merge 提交的区间。冲突暂停后，顶部提供 **Resolve Conflicts / Continue / Skip / Abort**；解决并暂存文件后再继续。消息文件保存在当前工作树的 Git 目录中，重启应用后仍可继续暂停的操作。受影响提交可从本地远程跟踪引用到达时会显示历史重写提示；此检查不自动 fetch，也未接入托管平台的分支保护规则。应用不执行强制推送。
+
+普通和根提交可导出保留作者、说明的 Git 格式补丁，merge 提交导出相对第一父提交的二进制兼容差异。历史文件树无需 checkout；预览只读，单文件限 2 MB，不跟随符号链接或进入子模块。
+
 ## 开发与检查
 
 ```sh
@@ -117,7 +128,7 @@ GitHub Actions 会在 Apple Silicon 和 Intel macOS 上执行检查和应用打�
 
 ## 当前限制
 
-- 按整个文件提交，尚未支持按行/hunk 暂存、交互式 rebase 编辑器、changelist/shelf、子模块/LFS 专用管理、签名验证、图片 Diff 和托管平台账户集成。
+- 按整个文件提交，尚未支持按行/hunk 暂存、changelist/shelf、子模块/LFS 专用管理、签名验证、图片 Diff 和托管平台账户集成。
 - 文本冲突编辑适用于 UTF-8；二进制冲突可使用 Accept Ours / Accept Theirs。
 - Diff 预览限制为合计 2 MB 和 20,000 行，单文件读取也限制为 2 MB。Git 子进程最长运行 120 秒。
 - Git 无交互式终端输入，远程操作前需配置认证；失败原因显示在界面/Console。未提供强制 push。
