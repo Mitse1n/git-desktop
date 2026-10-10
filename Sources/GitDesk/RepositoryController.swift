@@ -121,6 +121,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
   var isBusy = false
   var isRefreshing = false
   var pendingRefresh = false
+  var pendingRefreshLogOnly = true
   var debounce: DispatchWorkItem?
   var watcher: Timer?
   var conflictWindows: [ConflictWindowController] = []
@@ -180,7 +181,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     view = Surface(Theme.chrome)
     buildUI()
     watcher = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
-      guard let self, self.repository != nil, !self.isBusy, self.debounce == nil,
+      guard let self, self.repository != nil, !self.isBusy, !self.isRefreshing, self.debounce == nil,
         self.view.window?.attachedSheet == nil
       else { return }
       self.refresh(silent: true)
@@ -415,13 +416,13 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
       guard let self else { return }
       self.filter.regex.toggle()
       self.regexButton.contentTintColor = self.filter.regex ? Theme.blue : Theme.text
-      self.refresh()
+      self.refresh(logOnly: true)
     }
     caseButton.handler = { [weak self] in
       guard let self else { return }
       self.filter.matchCase.toggle()
       self.caseButton.contentTintColor = self.filter.matchCase ? Theme.blue : Theme.text
-      self.refresh()
+      self.refresh(logOnly: true)
     }
     for popup in [branchPopup, userPopup, datePopup] {
       popup.isBordered = false
@@ -781,25 +782,33 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
       }
     }
   }
-  func refresh(silent: Bool = false) {
+  func refresh(silent: Bool = false, logOnly: Bool = false) {
     guard let repo = repository, !isBusy else { return }
     if isRefreshing {
       loadToken += 1
       pendingRefresh = true
+      pendingRefreshLogOnly = pendingRefreshLogOnly && logOnly
       return
     }
     isRefreshing = true
+    pendingRefreshLogOnly = logOnly
     loadToken += 1
     let token = loadToken
     let currentEpoch = epoch
     let filter = self.filter
+    let previous = logOnly ? snapshot : nil
     if !silent {
       progress.startAnimation(nil)
       statusLabel.stringValue = "Refreshing…"
     }
     queue.async { [weak self] in
       do {
-        let data = try repo.snapshot(filter: filter)
+        let data: RepositorySnapshot
+        if let previous {
+          data = try repo.filteredSnapshot(from: previous, filter: filter)
+        } else {
+          data = try repo.snapshot(filter: filter)
+        }
         DispatchQueue.main.async {
           guard let self else { return }
           self.isRefreshing = false
@@ -813,8 +822,10 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
             }
           }
           if self.pendingRefresh {
+            let logOnly = self.pendingRefreshLogOnly
             self.pendingRefresh = false
-            self.refresh(silent: true)
+            self.pendingRefreshLogOnly = true
+            self.refresh(silent: true, logOnly: logOnly)
           }
         }
       } catch {
@@ -827,8 +838,10 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
             if !silent { self.showError(error) }
           }
           if self.pendingRefresh {
+            let logOnly = self.pendingRefreshLogOnly
             self.pendingRefresh = false
-            self.refresh(silent: true)
+            self.pendingRefreshLogOnly = true
+            self.refresh(silent: true, logOnly: logOnly)
           }
         }
       }
@@ -1019,18 +1032,18 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     debounce?.cancel()
     let work = DispatchWorkItem { [weak self] in
       self?.debounce = nil
-      self?.refresh()
+      self?.refresh(logOnly: true)
     }
     debounce = work
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)
   }
   @objc func branchFilterChanged() {
     filter.branch = branchPopup.selectedItem?.representedObject as? String
-    refresh()
+    refresh(logOnly: true)
   }
   @objc func userFilterChanged() {
     filter.author = userPopup.indexOfSelectedItem == 0 ? nil : userPopup.titleOfSelectedItem
-    refresh()
+    refresh(logOnly: true)
   }
   @objc func dateFilterChanged() {
     switch datePopup.indexOfSelectedItem {
@@ -1044,12 +1057,12 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
         filter.since = dates[0].isEmpty ? nil : dates[0]
         filter.until = dates[1].isEmpty ? nil : dates[1]
       }
-      refresh()
+      refresh(logOnly: true)
       return
     default: filter.since = nil
     }
     filter.until = nil
-    refresh()
+    refresh(logOnly: true)
   }
   func numberOfRows(in tableView: NSTableView) -> Int {
     tableView == logTable
@@ -1362,10 +1375,10 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     }
     if let branch = node.branch {
       filter.branch = branch.fullRef
-      refresh()
+      refresh(logOnly: true)
     } else if node.title == "HEAD (Current Branch)" {
       filter.branch = "HEAD"
-      refresh()
+      refresh(logOnly: true)
     }
   }
   @objc func showDiff() {

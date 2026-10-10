@@ -112,7 +112,7 @@ extension RepositoryController {
     menu.addItem(
       menuItem("Show All Branches") { [weak self] in
         self?.filter.branch = nil
-        self?.refresh()
+        self?.refresh(logOnly: true)
       })
     return menu
   }
@@ -130,7 +130,7 @@ extension RepositoryController {
       menuItem("Show in Log") { [weak self] in
         self?.filter.branch = branch.fullRef
         self?.setMode("Log")
-        self?.refresh()
+        self?.refresh(logOnly: true)
       })
     menu.addItem(
       menuItem("Compare with '\(snapshot?.currentBranch ?? "HEAD")'", enabled: !branch.current) {
@@ -713,11 +713,11 @@ extension RepositoryController {
             "Paths Filter", fields: [("Repository-relative path", self.filter.path ?? "")])
         else { return }
         self.filter.path = values[0].isEmpty ? nil : values[0]
-        self.refresh()
+        self.refresh(logOnly: true)
       })
     let first = menuItem("First Parent Only") { [weak self] in
       self?.filter.firstParent.toggle()
-      self?.refresh()
+      self?.refresh(logOnly: true)
     }
     first.state = filter.firstParent ? .on : .off
     menu.addItem(first)
@@ -729,7 +729,7 @@ extension RepositoryController {
         self.datePopup.selectItem(at: 0)
         self.regexButton.contentTintColor = Theme.text
         self.caseButton.contentTintColor = Theme.text
-        self.refresh()
+        self.refresh(logOnly: true)
       })
     menu.addItem(.separator())
     let group = menuItem("Group Branches by Prefix") { [weak self] in

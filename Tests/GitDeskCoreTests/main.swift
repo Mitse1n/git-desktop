@@ -71,6 +71,7 @@ let cases: [(String, (GitRepositoryTests) throws -> Void)] = [
   ("Rename parsing and commit", { try $0.testRenameParsingAndSelectedRenameCommit() }),
   ("Index and working diff", { try $0.testIndexAndWorkingDiff() }),
   ("Log filters", { try $0.testLogMessageRegexCaseAuthorPathAndBranchFilters() }),
+  ("Filtered snapshot preserves state", { try $0.testFilteredSnapshotPreservesRepositoryState() }),
   ("Branch and tag checkout", { try $0.testBranchAndTagCheckout() }),
   ("Stash and restore", { try $0.testStashAndRestore() }),
   ("Push, fetch and pull via local remote", { try $0.testLocalRemotePushFetchPull() }),

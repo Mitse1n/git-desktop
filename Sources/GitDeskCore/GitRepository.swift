@@ -59,18 +59,18 @@ public final class GitRepository {
     }
     task.standardOutput = out
     task.standardError = err
+    let finished = DispatchSemaphore(value: 0)
+    task.terminationHandler = { _ in finished.signal() }
     try task.run()
-    let deadline = Date().addingTimeInterval(120)
-    while task.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.02) }
-    if task.isRunning {
+    if finished.wait(timeout: .now() + 120) == .timedOut {
       task.terminate()
-      Thread.sleep(forTimeInterval: 0.2)
-      if task.isRunning { kill(task.processIdentifier, SIGKILL) }
-      task.waitUntilExit()
+      if finished.wait(timeout: .now() + 0.2) == .timedOut {
+        kill(task.processIdentifier, SIGKILL)
+        finished.wait()
+      }
       throw GitFailure(
         "Git operation timed out after 120 seconds.", command: args.joined(separator: " "))
     }
-    task.waitUntilExit()
     let output = try Data(contentsOf: outURL)
     let errors = try Data(contentsOf: errURL)
     let command = "git " + args.map { $0.contains(" ") ? "\"\($0)\"" : $0 }.joined(separator: " ")
@@ -205,6 +205,16 @@ public final class GitRepository {
       remotes: try run(["remote"]).split(separator: "\n").map(String.init),
       stashes: try run(["stash", "list", "--format=%gd: %s"]).split(separator: "\n").map(
         String.init), operation: operation, history: history)
+  }
+  // Changing a history filter does not change refs, the worktree, or stashes.
+  // Keep their last snapshot until an explicit/background repository refresh.
+  public func filteredSnapshot(from snapshot: RepositorySnapshot, filter: LogFilter) throws
+    -> RepositorySnapshot
+  {
+    RepositorySnapshot(
+      branches: snapshot.branches, commits: try log(filter), changes: snapshot.changes,
+      currentBranch: snapshot.currentBranch, remotes: snapshot.remotes, stashes: snapshot.stashes,
+      operation: snapshot.operation, history: snapshot.history)
   }
   public static func parseNameStatus(_ data: Data) -> [FileChange] {
     let fields = data.split(separator: 0).map { String(decoding: $0, as: UTF8.self) }

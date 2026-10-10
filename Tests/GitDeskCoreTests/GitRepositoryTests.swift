@@ -254,6 +254,45 @@ final class GitRepositoryTests: TestHarness {
     XCTAssertNil(try repo.snapshot().operation)
     XCTAssertEqual(try repo.status().map(\.path), ["unrelated"])
   }
+  func testFilteredSnapshotPreservesRepositoryState() throws {
+    try write("base", "one\n")
+    try commitAll("Initial")
+    try repo.createBranch("feature")
+    try write("feature", "two\n")
+    try commitAll("Feature")
+    try repo.run(["tag", "-a", "-m", "Release", "v1"])
+    try repo.run(["switch", "main"])
+    try write("base", "three\n")
+    try commitAll("Main")
+    try write("untracked", "Keep this change\n")
+    let original = try repo.snapshot()
+    for ref in ["refs/heads/main", "refs/heads/feature", "refs/tags/v1", "HEAD"] {
+      var filter = LogFilter()
+      filter.branch = ref
+      var commands: [String] = []
+      repo.onCommand = { command, _, _ in commands.append(command) }
+      let filtered = try repo.filteredSnapshot(from: original, filter: filter)
+      repo.onCommand = nil
+      XCTAssertEqual(filtered.commits, try repo.log(filter))
+      XCTAssertEqual(filtered.history, original.history)
+      XCTAssertEqual(filtered.branches, original.branches)
+      XCTAssertEqual(filtered.changes, original.changes)
+      XCTAssertEqual(filtered.currentBranch, original.currentBranch)
+      XCTAssertTrue(commands.count <= 3)
+      XCTAssertFalse(commands.contains { $0.hasPrefix("git status") || $0.hasPrefix("git stash") })
+    }
+    var search = LogFilter()
+    search.text = "FEATURE"
+    XCTAssertEqual(try repo.filteredSnapshot(from: original, filter: search).commits.map(\.subject), ["Feature"])
+    search.regex = true
+    search.text = "["
+    XCTAssertThrowsError(try repo.filteredSnapshot(from: original, filter: search))
+    search.regex = false
+    search.text = ""
+    search.branch = "refs/heads/missing"
+    XCTAssertThrowsError(try repo.filteredSnapshot(from: original, filter: search))
+    XCTAssertEqual(try repo.status(), original.changes)
+  }
   func testRebaseWorktreeAndAnnotatedTag() throws {
     try write("base", "base")
     try commitAll("Initial")
