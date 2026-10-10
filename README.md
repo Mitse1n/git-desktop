@@ -22,7 +22,7 @@ GitDesk brings commit history, branches, selected-file commits, and diffs into o
 - **History:** colored commit graph, branch and tag decorations, text/hash search, regex and case options, branch/author/date/path filters, and first-parent history.
 - **History actions:** undo the latest commit while preserving local/index changes, edit latest or earlier messages, parent/child navigation, patch export, and a read-only repository snapshot browser. A native interactive rebase editor supports reorder, pick, reword, squash, fixup, and drop.
 - **Branches:** grouped local/remote branches and tags, favorites, checkout, create, rename, delete, compare, merge, rebase, and worktrees.
-- **Commits:** select files, stage/unstage, preview changes, amend, reuse recent messages, and commit and push. Ordinary selected-file commits preserve unrelated staged changes using a temporary index.
+- **Commits:** grouped changes with inline directory names, click/Space inclusion with mixed group states, a resizable message area, stage/unstage, change previews, amend, message history, and commit and push. View options toggle directory names and file status; commit options set an optional author and sign-off trailer. Ordinary selected-file commits preserve unrelated staged changes using a temporary index.
 - **Diffs:** side-by-side and unified views, line numbers, change navigation, search, whitespace options, and basic syntax highlighting.
 - **Remotes:** clone, fetch, fast-forward-only pull, push, and remote configuration. Authentication uses existing Git/SSH/credential-helper configuration.
 - **Repository tools:** initialize/open repositories, recent repositories, repository-local identity, stash, text conflict resolution, cherry-pick, revert, reset, and continue/abort operations.
@@ -84,7 +84,8 @@ The demo includes branches, a merge, a tag, and uncommitted changes. An existing
 
 | Shortcut | Action |
 | --- | --- |
-| `⌘O` | Open repository |
+| `⌘N` | New empty window |
+| `⌘O` | Open repository in the current window |
 | `⌘K` | Commit panel |
 | `⇧⌘K` | Push |
 | `⌘T` | Pull |
@@ -94,6 +95,8 @@ The demo includes branches, a merge, a tag, and uncommitted changes. An existing
 | `⌘D` | Show diff |
 | `⌥⌘N` | New branch |
 | `⌘1` / `⌘2` | Log / Console |
+
+Opening or choosing a recent repository replaces the project in the current window. Use **New Window** (`⌘N`) for another independent project window. Double-clicking a commit updates its selection and details without opening a diff window; use **Show Diff** or `⌘D` to open one explicitly.
 
 ## Editing history
 
@@ -132,6 +135,7 @@ GitHub Actions runs these checks and bundles the app on Apple Silicon and Intel 
 - Text conflict editing supports UTF-8 files; binary conflicts can use Accept Ours / Accept Theirs.
 - Diff previews are limited to a combined 2 MB and 20,000 lines. Individual file reads are capped at 2 MB. Git subprocesses time out after 120 seconds.
 - Git runs without interactive terminal input. Configure authentication before remote operations; failures appear in the UI/Console. Force push is not offered.
+- Console keeps about 200,000 UTF-16 units of recent text and truncates individual command previews at 20,000 units. Git results used by the app are unaffected.
 - This is an independent project, with no affiliation with JetBrains or IntelliJ IDEA.
 
 ## Contributing and support

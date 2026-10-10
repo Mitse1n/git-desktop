@@ -497,6 +497,8 @@ extension RepositoryController {
     let files = snapshot?.changes.filter { selectedPaths.contains($0.path) } ?? []
     let message = commitMessage.string
     let isAmend = amend.state == .on
+    let author = commitAuthor
+    let signOff = commitSignOff
     if isAmend
       && !confirm(
         "Amend Last Commit?",
@@ -508,7 +510,8 @@ extension RepositoryController {
     }
     perform(
       isAmend ? "Amend commit" : "Commit",
-      work: { try $0.commit(message: message, changes: files, amend: isAmend) },
+      work: { try $0.commit(message: message, changes: files, amend: isAmend,
+        author: author, signOff: signOff) },
       completion: { [weak self] in
         guard let self else { return }
         var history = UserDefaults.standard.stringArray(forKey: "commitMessages") ?? []

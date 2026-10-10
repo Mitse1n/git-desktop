@@ -321,11 +321,17 @@ public final class GitRepository {
   private func paths(_ changes: [FileChange]) -> [String] {
     Array(Set(changes.flatMap { [$0.path] + ($0.oldPath.map { [$0] } ?? []) })).sorted()
   }
-  public func commit(message: String, changes: [FileChange], amend: Bool = false) throws {
+  public func commit(message: String, changes: [FileChange], amend: Bool = false,
+    author: String? = nil, signOff: Bool = false) throws {
     guard !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
       throw GitFailure("Enter a commit message.")
     }
     let currentChanges = try status()
+    var args = ["commit", "-m", message]
+    if let author, !author.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      args += ["--author", author]
+    }
+    if signOff { args.append("--signoff") }
     guard !currentChanges.contains(where: \.isConflicted) else {
       throw GitFailure("Resolve all conflicts before committing.")
     }
@@ -340,7 +346,7 @@ public final class GitRepository {
           of: Set(currentChanges.filter { !$0.isUntracked }.map(\.path)))
       else { throw GitFailure("Select all merge changes to complete the merge commit.") }
       if !changes.isEmpty { try stage(changes) }
-      try run(["commit", "-m", message])
+      try run(args)
       return
     }
     guard !changes.isEmpty || amend else { throw GitFailure("Select files to commit.") }
@@ -354,7 +360,6 @@ public final class GitRepository {
     try run(hasHead ? ["read-tree", "HEAD"] : ["read-tree", "--empty"], environment: env)
     let selectedPaths = paths(changes)
     if !selectedPaths.isEmpty { try run(["add", "--"] + selectedPaths, environment: env) }
-    var args = ["commit", "-m", message]
     if amend { args.append("--amend") }
     try run(args, environment: env)
     // Synchronize only the committed paths. Unrelated staged files remain staged.

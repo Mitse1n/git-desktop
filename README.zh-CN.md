@@ -22,7 +22,7 @@
 - **历史**：彩色提交图、分支和标签标记、消息/哈希搜索、正则与大小写选项、分支/作者/日期/路径筛选、first-parent 模式。
 - **历史操作**：撤销最新提交、修改最新或较早提交说明、父子提交跳转、补丁导出和只读历史文件树。原生交互式 rebase 编辑器支持排序、Pick、Reword、Squash、Fixup 和 Drop。
 - **分支**：本地/远程分支和标签分组、收藏、切换、新建、重命名、删除、比较、merge、rebase 和 worktree。
-- **提交**：按文件勾选、暂存/取消暂存、变更预览、amend、消息历史与 Commit and Push。普通选择文件提交通过临时 index 保留其他文件的暂存状态。
+- **提交**：分组变更树，文件名旁显示目录；点击或空格键勾选，分组支持半选状态。消息区可拖动调整大小，支持暂存/取消暂存、变更预览、amend、消息历史与 Commit and Push；视图选项可切换目录和文件状态，提交设置支持指定作者及 Sign-off。普通选择文件提交通过临时 index 保留其他文件的暂存状态。
 - **差异**：双栏和 Unified、行号、差异导航、搜索、忽略空白和基础语法着色。
 - **远程**：clone、fetch、仅 fast-forward 的 pull、push 和 remote 管理，复用已有 Git/SSH/credential helper 认证配置。
 - **仓库工具**：初始化和打开仓库、最近仓库、仓库级身份配置、stash、文本冲突处理、cherry-pick、revert、reset、继续/中止操作。
@@ -84,7 +84,8 @@ swift run GitDesk /tmp/gitdesk-demo
 
 | 快捷键 | 操作 |
 | --- | --- |
-| `⌘O` | 打开仓库 |
+| `⌘N` | 新建空白窗口 |
+| `⌘O` | 在当前窗口打开仓库 |
 | `⌘K` | Commit 面板 |
 | `⇧⌘K` | Push |
 | `⌘T` | Pull |
@@ -94,6 +95,8 @@ swift run GitDesk /tmp/gitdesk-demo
 | `⌘D` | 打开 Diff |
 | `⌥⌘N` | 新建分支 |
 | `⌘1` / `⌘2` | Log / Console |
+
+打开仓库或选择最近项目会替换当前窗口里的项目。需要另一个独立项目窗口时，使用 **New Window**（`⌘N`）。双击提交只更新选择和详情，不弹出 Diff 窗口；可通过 **Show Diff** 或 `⌘D` 主动打开。
 
 ## 编辑提交历史
 
@@ -132,6 +135,7 @@ GitHub Actions 会在 Apple Silicon 和 Intel macOS 上执行检查和应用打�
 - 文本冲突编辑适用于 UTF-8；二进制冲突可使用 Accept Ours / Accept Theirs。
 - Diff 预览限制为合计 2 MB 和 20,000 行，单文件读取也限制为 2 MB。Git 子进程最长运行 120 秒。
 - Git 无交互式终端输入，远程操作前需配置认证；失败原因显示在界面/Console。未提供强制 push。
+- Console 仅保留最近约 200,000 个 UTF-16 单元的文本，单条命令输出预览在 20,000 个单元处截断；应用读取的 Git 结果不受影响。
 - 本项目独立开发，与 JetBrains、IntelliJ IDEA 无隶属关系。
 
 ## 参与与支持

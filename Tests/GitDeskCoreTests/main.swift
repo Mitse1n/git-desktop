@@ -69,6 +69,7 @@ let cases: [(String, (GitRepositoryTests) throws -> Void)] = [
   ("History plan validation and navigation", { try $0.testHistoryPlanValidationAndNavigation() }),
   ("Unborn repository and initial commit", { try $0.testUnbornRepositoryAndInitialCommit() }),
   ("Selected commit preserves staging", { try $0.testSelectedCommitPreservesUnrelatedStaging() }),
+  ("Commit author and sign-off", { try $0.testCommitAuthorAndSignOff() }),
   ("Failed commit preserves index", { try $0.testFailedCommitPreservesIndexAndWorkingTree() }),
   (
     "Amend preserves unrelated staging",

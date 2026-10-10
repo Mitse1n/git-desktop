@@ -133,7 +133,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
   let branchOutline = MenuOutline()
   let logTable = LogTable()
   let filesTable = MenuOutline()
-  let changesTable = MenuTable()
+  let changesTable = CommitChangesTable()
   let branchSearch = FlatSearchField(frame: .zero)
   let logSearch = FlatSearchField(frame: .zero)
   let statusLabel = label("Open a Git repository to begin", color: Theme.muted, size: 11)
@@ -145,9 +145,11 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
   let detailTitle = label("Commit details", color: Theme.muted)
   let detailEmptyLabel = label("Commit details", color: Theme.muted)
   let detailsText = NSTextView()
-  let consoleText = NSTextView()
+  let consoleText = ConsoleTextView()
   let commitMessage = PlaceholderTextView()
-  let amend = NSButton(checkboxWithTitle: "Amend last commit", target: nil, action: nil)
+  let amend = CommitCheckbox(target: nil, action: nil)
+  var commitAuthor = ""
+  var commitSignOff = false
   let emptyLabel = label("No repository selected.", color: Theme.muted)
   let emptyAction = ActionButton("Open repository…") {}
   let branchPopup = FilterPopup(frame: .zero, pullsDown: false)
@@ -165,7 +167,17 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
   var consoleTab: ActionButton!
   var commitTab: ActionButton!
   var commitButton: ActionButton!
-  var changeSummary = label("Changes", bold: true)
+  var commitSections: GitSplitView!
+  var commitCompositionInitialized = false
+  var showCommitDirectories = UserDefaults.standard.object(forKey: "commitShowDirectories") as? Bool ?? true {
+    didSet { UserDefaults.standard.set(showCommitDirectories, forKey: "commitShowDirectories") }
+  }
+  var showCommitStatuses = UserDefaults.standard.bool(forKey: "commitShowStatuses") {
+    didSet { UserDefaults.standard.set(showCommitStatuses, forKey: "commitShowStatuses") }
+  }
+  var commitRollbackButton: ActionButton!
+  var commitDiffButton: ActionButton!
+  let sectionTitle = label("Git", bold: true)
   var lastConsole = ""
   var favoriteOnly = false
   var groupBranches = true
@@ -216,28 +228,6 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
       ], spacing: 8)
     top.translatesAutoresizingMaskIntoConstraints = false
     headerControls = top
-    let rail = Surface(Theme.chrome)
-    let railStack = NSStackView()
-    railStack.orientation = .vertical
-    railStack.spacing = 10
-    for (symbol, title, tab) in [
-      ("point.topleft.down.curvedto.point.bottomright.up", "Commit (⌘K)", "Commit"),
-      ("arrow.triangle.branch", "Git Log", "Log"), ("archivebox", "Stashes", "Stashes"),
-      ("terminal", "Git Console", "Console"),
-    ] {
-      railStack.addArrangedSubview(
-        ActionButton(symbol: symbol, tooltip: title) { [weak self] in
-          tab == "Stashes" ? self?.showStashes() : self?.setMode(tab)
-        })
-    }
-    railStack.translatesAutoresizingMaskIntoConstraints = false
-    rail.addSubview(railStack)
-    NSLayoutConstraint.activate([
-      railStack.topAnchor.constraint(equalTo: rail.topAnchor, constant: 14),
-      railStack.centerXAnchor.constraint(equalTo: rail.centerXAnchor),
-    ])
-    rail.translatesAutoresizingMaskIntoConstraints = false
-    view.addSubview(rail)
     mainBody = Surface()
     mainBody.wantsLayer = true
     mainBody.layer?.cornerRadius = 9
@@ -263,7 +253,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     operationControls.isHidden = true
     let tabs = row(
       [
-        label("Git", bold: true), logTab, consoleTab, commitTab, tabSpacer, operationControls,
+        sectionTitle, logTab, consoleTab, commitTab, tabSpacer, operationControls,
         ActionButton(symbol: "arrow.clockwise", tooltip: "Refresh (⌘R)") { [weak self] in
           self?.refresh()
         },
@@ -294,12 +284,8 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
       header.trailingAnchor.constraint(equalTo: view.trailingAnchor),
       header.topAnchor.constraint(equalTo: view.topAnchor),
       header.heightAnchor.constraint(equalToConstant: 42),
-      rail.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-      rail.widthAnchor.constraint(equalToConstant: 42),
-      rail.topAnchor.constraint(equalTo: header.bottomAnchor),
-      rail.bottomAnchor.constraint(equalTo: status.topAnchor),
       mainBody.topAnchor.constraint(equalTo: header.bottomAnchor),
-      mainBody.leadingAnchor.constraint(equalTo: rail.trailingAnchor),
+      mainBody.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 10),
       mainBody.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -10),
       mainBody.bottomAnchor.constraint(equalTo: status.topAnchor),
       status.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 14),
@@ -340,7 +326,6 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     toolbarRail.orientation = .vertical
     toolbarRail.spacing = 0
     let actions: [(String, String, () -> Void)] = [
-      ("chevron.left", "Hide Git Branches", { [weak self] in self?.toggleBranches() }),
       ("plus", "New Branch", { [weak self] in self?.newBranch() }),
       ("trash", "Delete Branch", { [weak self] in self?.deleteBranch() }),
       ("arrow.left.arrow.right", "Compare with Current", { [weak self] in self?.compareBranch() }),
@@ -402,7 +387,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     branchContent.addSubview(branchTree)
     NSLayoutConstraint.activate([
       toolbarRail.leadingAnchor.constraint(equalTo: branchContent.leadingAnchor, constant: 2),
-      toolbarRail.topAnchor.constraint(equalTo: branchContent.topAnchor, constant: 3),
+      toolbarRail.topAnchor.constraint(equalTo: branchContent.topAnchor, constant: 29),
       toolbarRail.widthAnchor.constraint(equalToConstant: 30),
       branchTree.leadingAnchor.constraint(equalTo: toolbarRail.trailingAnchor, constant: 1),
       branchTree.trailingAnchor.constraint(equalTo: branchContent.trailingAnchor),
@@ -488,7 +473,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     logTable.columnAutoresizingStyle = .noColumnAutoresizing
     logTable.menuProvider = { [weak self] in self?.commitContextMenu() ?? NSMenu() }
     logTable.target = self
-    logTable.doubleAction = #selector(showDiff)
+    logTable.doubleAction = nil
     let logArea = Surface()
     pin(scrollView(logTable), to: logArea)
     let empty = NSStackView(views: [emptyLabel, emptyAction])
@@ -570,107 +555,6 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     split.addArrangedSubview(right)
     pin(split, to: logBody)
   }
-  func buildCommit() {
-    configureTable(changesTable)
-    changesTable.dataSource = self
-    changesTable.delegate = self
-    changesTable.allowsMultipleSelection = true
-    changesTable.setAccessibilityLabel("Local Changes")
-    for (id, width) in [("check", 28.0), ("path", 320), ("state", 85)] {
-      let col = NSTableColumn(identifier: .init(id))
-      col.width = width
-      changesTable.addTableColumn(col)
-    }
-    changesTable.target = self
-    changesTable.doubleAction = #selector(showWorkingDiff)
-    changesTable.menuProvider = { [weak self] in self?.fileContextMenu(working: true) ?? NSMenu() }
-    let bar = row([
-      changeSummary, NSView(),
-      ActionButton(symbol: "checkmark.square", tooltip: "Select All Files") { [weak self] in
-        guard let self else { return }
-        self.selectedPaths = Set(self.snapshot?.changes.map(\.path) ?? [])
-        self.changesTable.reloadData()
-      },
-      ActionButton(symbol: "square", tooltip: "Deselect All Files") { [weak self] in
-        self?.selectedPaths.removeAll()
-        self?.changesTable.reloadData()
-      },
-      ActionButton(symbol: "arrow.clockwise", tooltip: "Refresh") { [weak self] in self?.refresh()
-      },
-      ActionButton(symbol: "arrow.uturn.backward", tooltip: "Rollback") { [weak self] in
-        self?.rollback()
-      },
-      ActionButton(symbol: "arrow.left.arrow.right", tooltip: "Show Diff") { [weak self] in
-        self?.showWorkingDiff()
-      },
-    ])
-    let left = Surface()
-    let changes = makePanel(bar, body: scrollView(changesTable))
-    amend.target = self
-    amend.action = #selector(amendChanged)
-    amend.font = Theme.font
-    amend.contentTintColor = Theme.text
-    let amendRow = labeledCheckbox(amend, title: "Amend last commit")
-    commitMessage.isRichText = false
-    commitMessage.isEditable = true
-    commitMessage.isSelectable = true
-    commitMessage.allowsUndo = true
-    commitMessage.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
-    commitMessage.textColor = Theme.text
-    commitMessage.backgroundColor = Theme.background
-    commitMessage.insertionPointColor = Theme.blue
-    commitMessage.textContainerInset = NSSize(width: 10, height: 10)
-    commitMessage.setAccessibilityLabel("Commit Message")
-    let messageScroll = scrollView(commitMessage)
-    messageScroll.hasHorizontalScroller = false
-    messageScroll.borderType = .lineBorder
-    commitButton = ActionButton("Commit") { [weak self] in self?.commitChanges(push: false) }
-    commitButton.isBordered = true
-    commitButton.bezelStyle = .rounded
-    commitButton.contentTintColor = .white
-    commitButton.bezelColor = Theme.blue
-    let buttons = row([
-      commitButton,
-      ActionButton("Commit and Push…") { [weak self] in self?.commitChanges(push: true) }, NSView(),
-      ActionButton(symbol: "clock", tooltip: "Commit Message History") { [weak self] in
-        self?.messageHistory()
-      },
-    ])
-    for child in [changes, amendRow, messageScroll, buttons] {
-      child.translatesAutoresizingMaskIntoConstraints = false
-      left.addSubview(child)
-    }
-    NSLayoutConstraint.activate([
-      changes.topAnchor.constraint(equalTo: left.topAnchor),
-      changes.leadingAnchor.constraint(equalTo: left.leadingAnchor),
-      changes.trailingAnchor.constraint(equalTo: left.trailingAnchor),
-      changes.bottomAnchor.constraint(equalTo: amendRow.topAnchor, constant: -8),
-      amendRow.leadingAnchor.constraint(equalTo: left.leadingAnchor, constant: 14),
-      amendRow.bottomAnchor.constraint(equalTo: messageScroll.topAnchor, constant: -10),
-      messageScroll.leadingAnchor.constraint(equalTo: left.leadingAnchor, constant: 14),
-      messageScroll.trailingAnchor.constraint(equalTo: left.trailingAnchor, constant: -14),
-      messageScroll.heightAnchor.constraint(equalToConstant: 150),
-      messageScroll.bottomAnchor.constraint(equalTo: buttons.topAnchor, constant: -10),
-      buttons.leadingAnchor.constraint(equalTo: left.leadingAnchor, constant: 14),
-      buttons.trailingAnchor.constraint(equalTo: left.trailingAnchor, constant: -14),
-      buttons.bottomAnchor.constraint(equalTo: left.bottomAnchor, constant: -12),
-    ])
-    let hint = Surface()
-    let text = label("Select a file to view its changes", color: Theme.muted)
-    text.translatesAutoresizingMaskIntoConstraints = false
-    hint.addSubview(text)
-    NSLayoutConstraint.activate([
-      text.centerXAnchor.constraint(equalTo: hint.centerXAnchor),
-      text.centerYAnchor.constraint(equalTo: hint.centerYAnchor),
-    ])
-    let workingSplit = NSSplitView()
-    workingSplit.isVertical = true
-    workingSplit.dividerStyle = .thin
-    workingSplit.autosaveName = "CommitSplit"
-    workingSplit.addArrangedSubview(left)
-    workingSplit.addArrangedSubview(hint)
-    pin(workingSplit, to: commitBody)
-  }
   func buildConsole() {
     consoleText.isEditable = false
     consoleText.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
@@ -701,6 +585,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
   override func viewDidLayout() {
     super.viewDidLayout()
     logTable.fitColumns()
+    layoutCommitComposition()
   }
   func splitView(
     _ splitView: NSSplitView, constrainMinCoordinate proposedMinimumPosition: CGFloat,
@@ -712,6 +597,8 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
   ) -> CGFloat { splitView.bounds.width - (dividerIndex == 0 ? 600 : 230) }
   func setMode(_ mode: String) {
     self.mode = mode
+    sectionTitle.stringValue = mode == "Commit" ? "Commit" : "Git"
+    if mode == "Commit" { layoutCommitComposition() }
     logBody.isHidden = mode != "Log"
     commitBody.isHidden = mode != "Commit"
     consoleBody.isHidden = mode != "Console"
@@ -724,25 +611,19 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     let stamp = DateFormatter()
     stamp.dateFormat = "HH:mm:ss"
     let text =
-      "[\(stamp.string(from: Date()))] \(command)\n" + output
+      "[\(stamp.string(from: Date()))] \(ConsoleTextView.preview(command, limit: 2048))\n" + output
       + (output.hasSuffix("\n") || output.isEmpty ? "" : "\n")
       + (status == 0 ? "" : "Exit code: \(status)\n") + "\n"
-    consoleText.textStorage?.append(
-      NSAttributedString(
-        string: text,
-        attributes: [
-          .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular),
-          .foregroundColor: status == 0 ? Theme.text : Theme.red,
-        ]))
-    if consoleText.string.count > 200000 {
-      consoleText.textStorage?.deleteCharacters(in: NSRange(location: 0, length: 100000))
-    }
-    consoleText.scrollToEndOfDocument(nil)
+    consoleText.appendEntry(text, attributes: [
+      .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular),
+      .foregroundColor: status == 0 ? Theme.text : Theme.red,
+    ])
   }
   func open(_ url: URL) {
     guard !isBusy else { return }
     epoch += 1
     let currentEpoch = epoch
+    consoleText.string = ""
     inlineDiff?.clear()
     loadedDetailHash = nil
     pendingDiffHash = nil
@@ -753,6 +634,8 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     branchesLoaded = false
     branchExpansionState = [:]
     selectedPaths = []
+    commitAuthor = ""
+    commitSignOff = false
     filter = LogFilter()
     logSearch.stringValue = ""
     branchSearch.stringValue = ""
@@ -764,7 +647,11 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
       do {
         let repo = try GitRepository(url: url)
         repo.onCommand = { [weak self] cmd, output, code in
-          DispatchQueue.main.async { self?.appendConsole(cmd, output: output, status: code) }
+          let preview = ConsoleTextView.preview(output)
+          DispatchQueue.main.async {
+            guard let self, self.epoch == currentEpoch else { return }
+            self.appendConsole(cmd, output: preview, status: code)
+          }
         }
         let data = try repo.snapshot()
         let userEmail = (try? repo.run(["config", "user.email"]).trimmingCharacters(in: .whitespacesAndNewlines)) ?? ""
@@ -920,7 +807,6 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     }
     logTable.fitColumns()
     logTable.reloadData()
-    changesTable.reloadData()
     rebuildBranches()
     if let selectedHash, let index = data.commits.firstIndex(where: { $0.hash == selectedHash }) {
       logTable.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
@@ -961,7 +847,6 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     for author in allAuthors.sorted() { userPopup.addItem(withTitle: author) }
     if let selectedAuthor { userPopup.selectItem(withTitle: selectedAuthor) }
     branchLabel.title = data.currentBranch
-    changeSummary.stringValue = "Changes  \(data.changes.count) files"
     let available = Set(data.changes.map(\.path))
     selectedPaths.formIntersection(available)
     updateStatus()
@@ -1093,7 +978,8 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
   }
   func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
     let view = SelectionRow()
-    view.usesInactiveColor = tableView != logTable
+    view.usesInactiveColor = tableView != logTable && tableView != changesTable
+    if tableView == changesTable { view.cornerRadius = 3 }
     if tableView == logTable, highlightCurrentBranch,
       let commits = snapshot?.commits, row < commits.count,
       currentBranchHistory.contains(commits[row].hash) {
@@ -1136,63 +1022,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
       format.dateFormat = "yyyy/M/d HH:mm"
       return cellText(format.string(from: commit.date), color: commit.parents.count > 1 ? Theme.muted : Theme.text)
     }
-    guard rowIndex < workingRows.count else { return nil }
-    let item = workingRows[rowIndex]
-    if case .group(let name, let files) = item {
-      if id == "check" {
-        let check = NSButton(checkboxWithTitle: "", target: self, action: #selector(checkFile(_:)))
-        check.tag = rowIndex
-        check.allowsMixedState = true
-        let included = files.filter { selectedPaths.contains($0.path) }.count
-        check.state = included == 0 ? .off : included == files.count ? .on : .mixed
-        check.setAccessibilityLabel("Include " + name)
-        return check
-      }
-      if id == "state" { return cellText("\(files.count) files", color: Theme.muted, size: 11) }
-      let cell = NSTableCellView()
-      let arrow = ActionButton(
-        symbol: collapsedChanges.contains(name) ? "chevron.right" : "chevron.down",
-        tooltip: "Expand / Collapse " + name
-      ) { [weak self] in
-        guard let self else { return }
-        if self.collapsedChanges.contains(name) {
-          self.collapsedChanges.remove(name)
-        } else {
-          self.collapsedChanges.insert(name)
-        }
-        self.rebuildWorkingRows()
-      }
-      pin(row([arrow, label(name, bold: true)]), to: cell)
-      return cell
-    }
-    let file = item.files[0]
-    if id == "check" {
-      let check = NSButton(checkboxWithTitle: "", target: self, action: #selector(checkFile(_:)))
-      check.tag = rowIndex
-      check.state = selectedPaths.contains(file.path) ? .on : .off
-      check.setAccessibilityLabel("Include \(file.path) in commit")
-      return check
-    }
-    if id == "state" {
-      return cellText(
-        file.isConflicted ? "Conflict" : file.isStaged ? "Staged" : file.status,
-        color: file.isConflicted ? Theme.red : Theme.muted, size: 11)
-    }
-    let cell = NSTableCellView()
-    let icon = NSImageView()
-    icon.image = NSImage(
-      systemSymbolName: file.isConflicted ? "exclamationmark.triangle" : "doc",
-      accessibilityDescription: file.status)
-    icon.contentTintColor =
-      file.isConflicted
-      ? Theme.red : file.isUntracked ? Theme.red : file.status == "Added" ? Theme.green : Theme.blue
-    let text = label(file.path, color: icon.contentTintColor ?? Theme.text)
-    text.toolTip = file.oldPath.map { "\($0) → \(file.path)" } ?? file.path
-    let stack = row([icon, text], spacing: 6)
-    icon.translatesAutoresizingMaskIntoConstraints = false
-    icon.widthAnchor.constraint(equalToConstant: 14).isActive = true
-    pin(stack, to: cell, inset: 4)
-    return cell
+    return workingCell(at: rowIndex)
   }
   func cellText(_ text: String, color: NSColor = Theme.text, size: CGFloat = 13) -> NSTableCellView {
     let cell = NSTableCellView()
@@ -1204,17 +1034,22 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
   @objc func checkFile(_ sender: NSButton) {
     guard sender.tag < workingRows.count else { return }
     let files = workingRows[sender.tag].files
-    if sender.state == .off {
+    if files.allSatisfy({ selectedPaths.contains($0.path) }) {
       files.forEach { selectedPaths.remove($0.path) }
     } else {
       files.forEach { selectedPaths.insert($0.path) }
     }
-    changesTable.reloadData()
+    reloadWorkingCells()
   }
   func rebuildWorkingRows() {
+    let groups = Set(changesTable.selectedRowIndexes.compactMap { index -> String? in
+      guard workingRows.indices.contains(index), case .group(let name, _) = workingRows[index] else { return nil }
+      return name
+    })
     let selection = Set(
       changesTable.selectedRowIndexes.flatMap { index in
-        index < workingRows.count ? workingRows[index].files.map(\.path) : []
+        if workingRows.indices.contains(index), case .file(let file) = workingRows[index] { return [file.path] }
+        return []
       })
     let files = snapshot?.changes ?? []
     workingRows = []
@@ -1222,16 +1057,18 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
       ("Conflicts", files.filter(\.isConflicted)),
       ("Changes", files.filter { !$0.isUntracked && !$0.isConflicted }),
       ("Unversioned Files", files.filter(\.isUntracked)),
-    ] where !group.isEmpty {
+    ] where name == "Changes" || !group.isEmpty {
       workingRows.append(.group(name, group))
       if !collapsedChanges.contains(name) { workingRows += group.map(WorkingRow.file) }
     }
     changesTable.reloadData()
     let indices = workingRows.indices.filter { index in
       if case .file(let file) = workingRows[index] { return selection.contains(file.path) }
+      if case .group(let name, _) = workingRows[index] { return groups.contains(name) }
       return false
     }
-    changesTable.selectRowIndexes(IndexSet(indices), byExtendingSelection: false)
+    changesTable.selectRowIndexes(IndexSet(indices.isEmpty ? [0] : indices), byExtendingSelection: false)
+    updateCommitToolbar()
   }
   func rebuildDetailFiles() {
     let selection = Set(selectedDetailFiles.map(\.path))
@@ -1277,6 +1114,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
       comparison = nil
       loadDetails(commits[i])
     } else if table == changesTable {
+      updateCommitToolbar()
       previewWorkingDiff()
     }
   }
@@ -1484,6 +1322,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     for (name, value) in fields {
       stack.addArrangedSubview(label(name))
       let input = NSTextField(string: value)
+      input.setAccessibilityLabel(name)
       input.widthAnchor.constraint(equalToConstant: 350).isActive = true
       stack.addArrangedSubview(input)
       inputs.append(input)

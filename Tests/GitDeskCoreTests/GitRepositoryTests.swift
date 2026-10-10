@@ -74,6 +74,29 @@ final class GitRepositoryTests: TestHarness {
     XCTAssertEqual(
       try String(contentsOf: directory.appendingPathComponent("tracked"), encoding: .utf8), "two")
   }
+  func testCommitAuthorAndSignOff() throws {
+    try write("a", "one")
+    try write("unrelated", "staged")
+    try repo.stage(repo.status().filter { $0.path == "unrelated" })
+    try repo.commit(message: "Custom author", changes: repo.status().filter { $0.path == "a" },
+      author: "Example Author <author@example.test>", signOff: true)
+    XCTAssertEqual(try repo.run(["log", "-1", "--format=%an <%ae>"]).trimmingCharacters(in: .whitespacesAndNewlines),
+      "Example Author <author@example.test>")
+    XCTAssertTrue(try repo.run(["log", "-1", "--format=%B"]).contains("Signed-off-by: Test User <test@example.test>"))
+    XCTAssertEqual(try repo.status().map(\.path), ["unrelated"])
+    XCTAssertTrue(try repo.status()[0].isStaged)
+    try repo.commit(message: "Amended", changes: [], amend: true,
+      author: "Revised Author <revised@example.test>")
+    XCTAssertEqual(try repo.run(["log", "-1", "--format=%an"]).trimmingCharacters(in: .whitespacesAndNewlines), "Revised Author")
+    XCTAssertFalse(try repo.run(["log", "-1", "--format=%B"]).contains("Signed-off-by:"))
+    try write("a", "two")
+    let head = try repo.resolve("HEAD")
+    let index = try repo.runData(["ls-files", "--stage", "-z"])
+    XCTAssertThrowsError(try repo.commit(message: "Bad author", changes: repo.status().filter { $0.path == "a" },
+      author: "invalid author without an email"))
+    XCTAssertEqual(try repo.resolve("HEAD"), head)
+    XCTAssertEqual(try repo.runData(["ls-files", "--stage", "-z"]), index)
+  }
   func testAmendWithoutChangesPreservesUnrelatedStagedFiles() throws {
     try write("a", "one")
     try commitAll("Initial")
@@ -249,8 +272,11 @@ final class GitRepositoryTests: TestHarness {
     try repo.run(["merge", "--no-ff", "--no-commit", "feature"])
     try write("unrelated", "local notes")
     XCTAssertThrowsError(try repo.commit(message: "Merge", changes: []))
-    try repo.commit(message: "Merge", changes: repo.status().filter { !$0.isUntracked })
+    try repo.commit(message: "Merge", changes: repo.status().filter { !$0.isUntracked },
+      author: "Merge Author <merge@example.test>", signOff: true)
     XCTAssertEqual(try repo.log()[0].parents.count, 2)
+    XCTAssertEqual(try repo.log()[0].author, "Merge Author")
+    XCTAssertTrue(try repo.log()[0].body.contains("Signed-off-by: Test User <test@example.test>"))
     XCTAssertNil(try repo.snapshot().operation)
     XCTAssertEqual(try repo.status().map(\.path), ["unrelated"])
   }

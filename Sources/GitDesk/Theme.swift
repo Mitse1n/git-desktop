@@ -60,6 +60,25 @@ final class RepositoryHeader: NSView {
   }
 }
 
+final class RepositoryTitlebarAccessoryView: NSView {
+  private let controls: NSStackView
+  init(controls: NSStackView, width: CGFloat) {
+    self.controls = controls
+    super.init(frame: NSRect(x: 0, y: 0, width: width, height: 42))
+    controls.translatesAutoresizingMaskIntoConstraints = true
+    addSubview(controls)
+  }
+  required init?(coder: NSCoder) { fatalError() }
+  override func layout() {
+    super.layout()
+    guard let button = window?.standardWindowButton(.closeButton) else { return }
+    // The compact toolbar's accessory bounds do not share the window's top inset.
+    // Convert the actual traffic-light center so resize and backing scale stay aligned.
+    let center = convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), from: button).y
+    controls.frame = NSRect(x: 0, y: center - 16, width: max(0, bounds.width - 14), height: 32)
+  }
+}
+
 enum ProjectIdentity {
   static func initials(_ name: String) -> String {
     let separated = name.replacingOccurrences(
@@ -125,19 +144,21 @@ final class HeaderMenuButton: NSButton {
     isBordered = false
     target = self
     action = #selector(invoke)
-    font = .systemFont(ofSize: 13, weight: .medium)
+    font = .systemFont(ofSize: 13, weight: .regular)
     translatesAutoresizingMaskIntoConstraints = false
     setAccessibilityLabel(title)
     setContentHuggingPriority(.required, for: .horizontal)
     setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
   }
   required init?(coder: NSCoder) { fatalError() }
+  private var titleInset: CGFloat { kind == .repository ? 26 : 20 }
   override var intrinsicContentSize: NSSize {
     let width = (title as NSString).size(withAttributes: [.font: font!]).width
-    return NSSize(width: min(width, kind == .repository ? 220 : 280) + 42, height: 32)
+    return NSSize(width: min(width, kind == .repository ? 220 : 280) + titleInset + 16, height: 32)
   }
   override func draw(_ dirtyRect: NSRect) {
-    let center = bounds.midY
+    let scale = window?.backingScaleFactor ?? 1
+    let center = (bounds.midY * scale).rounded() / scale
     if isHighlighted {
       NSColor.white.withAlphaComponent(0.08).setFill()
       NSBezierPath(roundedRect: bounds, xRadius: 5, yRadius: 5).fill()
@@ -147,14 +168,15 @@ final class HeaderMenuButton: NSButton {
         name: title, color: projectColor,
         in: NSRect(x: 0, y: center - 10, width: 20, height: 20))
     } else {
-      Theme.branchIcon.draw(in: NSRect(x: 0, y: center - 8, width: 16, height: 16),
+      Theme.branchIcon.draw(in: NSRect(x: 0, y: center - 7, width: 14, height: 14),
         from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
     }
     let paragraph = NSMutableParagraphStyle()
     paragraph.lineBreakMode = .byTruncatingTail
     let height = (title as NSString).size(withAttributes: [.font: font!]).height
     (title as NSString).draw(
-      in: NSRect(x: 26, y: center - height / 2, width: max(0, bounds.width - 42), height: height),
+      in: NSRect(x: titleInset, y: ((center - height / 2) * scale).rounded() / scale,
+        width: max(0, bounds.width - titleInset - 16), height: height),
       withAttributes: [.font: font!, .foregroundColor: Theme.text, .paragraphStyle: paragraph])
     Theme.text.withAlphaComponent(0.85).setStroke()
     let chevron = NSBezierPath()
@@ -177,13 +199,26 @@ func label(_ text: String, color: NSColor = Theme.text, size: CGFloat = 13, bold
   return field
 }
 final class ActionButton: NSButton {
+  enum CommitStyle { case primary, secondary }
+  var commitStyle: CommitStyle? { didSet { invalidateIntrinsicContentSize(); needsDisplay = true } }
   var handler: (() -> Void)?
   var isTab = false { didSet { invalidateIntrinsicContentSize(); needsDisplay = true } }
   override var intrinsicContentSize: NSSize {
+    if commitStyle != nil { return NSSize(width: (title as NSString).size(withAttributes: [.font: Theme.font]).width + 28, height: 28) }
     if isTab { return NSSize(width: (title as NSString).size(withAttributes: [.font: Theme.font]).width + 14, height: 30) }
     return super.intrinsicContentSize
   }
   override func draw(_ dirtyRect: NSRect) {
+    if let commitStyle {
+      let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 4, yRadius: 4)
+      (commitStyle == .primary ? NSColor(hex: isHighlighted ? 0x315FBC : 0x3574F0) : Theme.background).setFill()
+      path.fill()
+      if commitStyle == .secondary { NSColor(hex: 0x43454A).setStroke(); path.lineWidth = 1; path.stroke() }
+      let size = (title as NSString).size(withAttributes: [.font: Theme.font])
+      (title as NSString).draw(at: NSPoint(x: bounds.midX - size.width / 2, y: bounds.midY - size.height / 2),
+        withAttributes: [.font: Theme.font, .foregroundColor: commitStyle == .primary ? NSColor.white : Theme.text])
+      return
+    }
     guard isTab else { super.draw(dirtyRect); return }
     if isBordered {
       let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 1.5), xRadius: 4, yRadius: 4)
@@ -415,6 +450,7 @@ final class MenuOutline: NSOutlineView {
 }
 final class SelectionRow: NSTableRowView {
   var usesInactiveColor = true
+  var cornerRadius: CGFloat = 0
   var backgroundTint: NSColor?
   override func drawBackground(in dirtyRect: NSRect) {
     if let backgroundTint {
@@ -424,7 +460,7 @@ final class SelectionRow: NSTableRowView {
   }
   override func drawSelection(in dirtyRect: NSRect) {
     (isEmphasized || !usesInactiveColor ? NSColor(hex: 0x2E436E) : NSColor(hex: 0x33353A)).setFill()
-    bounds.fill()
+    NSBezierPath(roundedRect: bounds, xRadius: cornerRadius, yRadius: cornerRadius).fill()
   }
 }
 final class MenuAction: NSObject {
