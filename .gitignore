@@ -1,0 +1,22 @@
+# Build output
+.build/
+dist/
+.swiftpm/
+DerivedData/
+
+# macOS and editor state
+.DS_Store
+.idea/
+.vscode/
+xcuserdata/
+*.xcuserstate
+*.swp
+*~
+
+# Local credentials and configuration
+.env
+.env.*
+!.env.example
+*.p12
+*.p8
+*.mobileprovision

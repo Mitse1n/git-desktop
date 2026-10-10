@@ -1,0 +1,20 @@
+name: Feature request / 功能建议
+description: Propose an improvement to GitDesk / 提出改进建议
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or workflow / 问题或使用场景
+      description: What are you trying to do, and what gets in the way?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior / 建议行为
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives and context / 替代方案和补充信息

@@ -1,0 +1,362 @@
+import Foundation
+import GitDeskCore
+
+final class GitRepositoryTests: TestHarness {
+  var directory: URL!
+  var repo: GitRepository!
+  func setUpWithError() throws {
+    directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "gitdesk-test-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    repo = GitRepository(directory: directory)
+    try repo.run(["init", "-b", "main"])
+    try repo.run(["config", "user.name", "Test User"])
+    try repo.run(["config", "user.email", "test@example.test"])
+    try repo.run(["config", "commit.gpgsign", "false"])
+    try repo.run(["config", "core.hooksPath", "/dev/null"])
+  }
+  func tearDownWithError() throws { try FileManager.default.removeItem(at: directory) }
+  func write(_ path: String, _ text: String) throws {
+    let url = directory.appendingPathComponent(path)
+    try FileManager.default.createDirectory(
+      at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try Data(text.utf8).write(to: url)
+  }
+  func commitAll(_ message: String) throws {
+    try repo.run(["add", "."])
+    try repo.run(["commit", "-m", message])
+  }
+  func testUnbornRepositoryAndInitialCommit() throws {
+    let snapshot = try repo.snapshot()
+    XCTAssertEqual(snapshot.currentBranch, "main")
+    XCTAssertEqual(snapshot.branches.first?.name, "main")
+    XCTAssertTrue(snapshot.commits.isEmpty)
+    try write("hello.txt", "Initial stage\n")
+    try repo.stage(repo.status())
+    try write("hello.txt", "Hello\n")
+    try repo.unstage(repo.status())
+    XCTAssertTrue(try repo.status()[0].isUntracked)
+    XCTAssertEqual(
+      try String(contentsOf: directory.appendingPathComponent("hello.txt"), encoding: .utf8),
+      "Hello\n")
+    try repo.commit(message: "Initial", changes: repo.status())
+    XCTAssertEqual(try repo.log().first?.subject, "Initial")
+    XCTAssertTrue(try repo.status().isEmpty)
+    XCTAssertEqual(try repo.changes(in: XCTUnwrap(repo.log().first)).map(\.path), ["hello.txt"])
+  }
+  func testSelectedCommitPreservesUnrelatedStaging() throws {
+    try write("a.txt", "one\n")
+    try write("b.txt", "one\n")
+    try commitAll("Initial")
+    try write("a.txt", "two\n")
+    try write("b.txt", "two\n")
+    try repo.stage(repo.status().filter { $0.path == "b.txt" })
+    try repo.commit(message: "Only A", changes: repo.status().filter { $0.path == "a.txt" })
+    XCTAssertEqual(
+      String(decoding: try repo.blob(ref: "HEAD", path: "a.txt"), as: UTF8.self), "two\n")
+    XCTAssertEqual(
+      String(decoding: try repo.blob(ref: "HEAD", path: "b.txt"), as: UTF8.self), "one\n")
+    let changes = try repo.status()
+    XCTAssertEqual(changes.count, 1)
+    XCTAssertEqual(changes[0].path, "b.txt")
+    XCTAssertTrue(changes[0].isStaged)
+  }
+  func testFailedCommitPreservesIndexAndWorkingTree() throws {
+    try write("tracked", "one")
+    try commitAll("Initial")
+    try write("tracked", "two")
+    try write("new", "new")
+    try repo.run(["config", "user.name", ""])
+    try repo.run(["config", "user.email", ""])
+    let before = try repo.runData(["ls-files", "--stage", "-z"])
+    XCTAssertThrowsError(try repo.commit(message: "Fail", changes: repo.status()))
+    XCTAssertEqual(before, try repo.runData(["ls-files", "--stage", "-z"]))
+    XCTAssertEqual(
+      try String(contentsOf: directory.appendingPathComponent("tracked"), encoding: .utf8), "two")
+  }
+  func testAmendWithoutChangesPreservesUnrelatedStagedFiles() throws {
+    try write("a", "one")
+    try commitAll("Initial")
+    let old = try repo.resolve("HEAD")
+    try write("b", "two")
+    try repo.stage(repo.status())
+    try repo.commit(message: "Amended", changes: [], amend: true)
+    XCTAssertNotEqual(old, try repo.resolve("HEAD"))
+    XCTAssertEqual(try repo.log().count, 1)
+    XCTAssertEqual(try repo.log()[0].subject, "Amended")
+    XCTAssertTrue(try repo.status()[0].isStaged)
+    XCTAssertEqual(
+      try repo.run(["ls-tree", "--name-only", "HEAD"]).trimmingCharacters(
+        in: .whitespacesAndNewlines), "a")
+  }
+  func testNulPathsUnicodeAndLiteralPathspecs() throws {
+    let names = [
+      "name with spaces.txt", "line\nbreak.txt", "中文文件.txt", ":(glob)*.txt", "$(touch nope).txt",
+      "-leading.txt",
+    ]
+    for name in names { try write(name, "content\n") }
+    let changes = try repo.status()
+    XCTAssertEqual(Set(changes.map(\.path)), Set(names))
+    try repo.commit(message: "Odd paths", changes: changes)
+    XCTAssertEqual(Set(try repo.changes(in: repo.log()[0]).map(\.path)), Set(names))
+    XCTAssertFalse(
+      FileManager.default.fileExists(atPath: directory.appendingPathComponent("nope").path))
+  }
+  func testSymlinkAndPreviewLimits() throws {
+    try write("one", "contents one")
+    try write("two", "contents two")
+    let link = directory.appendingPathComponent("link")
+    try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: "one")
+    try commitAll("Initial")
+    try FileManager.default.removeItem(at: link)
+    try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: "two")
+    let pair = try repo.workingDiff(change: FileChange(path: "link"))
+    XCTAssertEqual(pair.0, Data("one".utf8))
+    XCTAssertEqual(pair.1, Data("two".utf8))
+    try Data(repeating: 65, count: 2_000_001).write(to: directory.appendingPathComponent("large"))
+    XCTAssertThrowsError(try repo.readWorkingFile("large"))
+    try repo.stage(repo.status())
+    XCTAssertThrowsError(try repo.blob(ref: ":", path: "large", limit: 2_000_000))
+  }
+  func testRenameParsingAndSelectedRenameCommit() throws {
+    try write("old name.txt", "contents\n")
+    try commitAll("Initial")
+    try repo.run(["mv", "old name.txt", "new name.txt"])
+    let files = try repo.status()
+    XCTAssertEqual(files.first?.oldPath, "old name.txt")
+    XCTAssertEqual(files.first?.path, "new name.txt")
+    try repo.commit(message: "Rename", changes: files)
+    let commit = try repo.log()[0]
+    XCTAssertEqual(try repo.changes(in: commit)[0].oldPath, "old name.txt")
+    let pair = try repo.contents(change: repo.changes(in: commit)[0], commit: commit)
+    XCTAssertEqual(pair.0, pair.1)
+    XCTAssertTrue(try repo.status().isEmpty)
+  }
+  func testIndexAndWorkingDiff() throws {
+    try write("a", "base\n")
+    try commitAll("Initial")
+    try write("a", "staged\n")
+    try repo.stage(repo.status())
+    try write("a", "working\n")
+    let change = try repo.status()[0]
+    let staged = try repo.contents(change: change, staged: true)
+    XCTAssertEqual(staged.0, Data("base\n".utf8))
+    XCTAssertEqual(staged.1, Data("staged\n".utf8))
+    let working = try repo.contents(change: change)
+    XCTAssertEqual(working.0, Data("staged\n".utf8))
+    XCTAssertEqual(working.1, Data("working\n".utf8))
+    let total = try repo.workingDiff(change: change)
+    XCTAssertEqual(total.0, Data("base\n".utf8))
+    XCTAssertEqual(total.1, Data("working\n".utf8))
+  }
+  func testLogMessageRegexCaseAuthorPathAndBranchFilters() throws {
+    try write("a", "one")
+    try commitAll("Initial\n\nBody with a separator \u{1e} and detail")
+    try repo.createBranch("feature/filter")
+    try write("b", "two")
+    try commitAll("FEATURE two")
+    try repo.run(["switch", "main"])
+    var filter = LogFilter()
+    filter.text = "feature"
+    XCTAssertEqual(try repo.log(filter).count, 1)
+    filter.matchCase = true
+    XCTAssertEqual(try repo.log(filter).count, 0)
+    filter.regex = true
+    filter.matchCase = false
+    filter.text = "feature.*two"
+    XCTAssertEqual(try repo.log(filter).count, 1)
+    filter.text = "["
+    XCTAssertThrowsError(try repo.log(filter))
+    filter = LogFilter()
+    filter.branch = "main"
+    XCTAssertEqual(try repo.log(filter).count, 1)
+    filter = LogFilter()
+    filter.path = "b"
+    XCTAssertEqual(try repo.log(filter).count, 1)
+    filter = LogFilter()
+    filter.author = "Missing"
+    XCTAssertTrue(try repo.log(filter).isEmpty)
+    XCTAssertTrue(try repo.log().last!.body.contains("separator"))
+  }
+  func testBranchAndTagCheckout() throws {
+    try write("a", "one")
+    try commitAll("Initial")
+    try repo.createBranch("feature/test")
+    XCTAssertEqual(try repo.snapshot().currentBranch, "feature/test")
+    try repo.checkout(try XCTUnwrap(repo.branches().first { $0.name == "main" }))
+    XCTAssertEqual(try repo.snapshot().currentBranch, "main")
+    try repo.run(["tag", "v1"])
+    try repo.checkout(try XCTUnwrap(repo.branches().first { $0.name == "v1" }))
+    XCTAssertEqual(try repo.snapshot().currentBranch, "Detached HEAD")
+    XCTAssertThrowsError(try repo.createBranch("--bad"))
+    XCTAssertThrowsError(try repo.resolve("--all"))
+  }
+  func testStashAndRestore() throws {
+    try write("a", "one")
+    try commitAll("Initial")
+    try write("a", "two")
+    try write("new", "three")
+    try repo.run(["stash", "push", "-u", "-m", "Test stash"])
+    XCTAssertTrue(try repo.status().isEmpty)
+    XCTAssertEqual(try repo.snapshot().stashes.count, 1)
+    try repo.run(["stash", "pop"])
+    XCTAssertEqual(try repo.status().count, 2)
+    XCTAssertTrue(try repo.snapshot().stashes.isEmpty)
+  }
+  func testLocalRemotePushFetchPull() throws {
+    let bare = directory.appendingPathComponent("remote.git")
+    let clone = directory.appendingPathComponent("clone")
+    try repo.run(["init", "--bare", bare.path])
+    try write(".gitignore", "remote.git/\nclone/\n")
+    try write("a", "one")
+    try commitAll("Initial")
+    try repo.run(["remote", "add", "origin", bare.path])
+    try repo.run(["push", "-u", "origin", "main"])
+    try repo.run(["clone", "-b", "main", bare.path, clone.path])
+    let other = try GitRepository(url: clone)
+    try write("a", "two")
+    try commitAll("Second")
+    try repo.run(["push"])
+    try other.run(["fetch", "--all", "--prune"])
+    try other.run(["pull", "--ff-only"])
+    XCTAssertEqual(try other.resolve("HEAD"), try repo.resolve("HEAD"))
+  }
+  func testConflictDetectionStagesAndAbort() throws {
+    try write("a", "base\n")
+    try commitAll("Initial")
+    try repo.createBranch("feature")
+    try write("a", "feature\n")
+    try commitAll("Feature")
+    try repo.run(["switch", "main"])
+    try write("a", "main\n")
+    try commitAll("Main")
+    XCTAssertThrowsError(try repo.run(["merge", "feature"]))
+    XCTAssertTrue(try repo.status()[0].isConflicted)
+    XCTAssertEqual(try repo.snapshot().operation, "merge")
+    XCTAssertEqual(try repo.blob(ref: ":2", path: "a"), Data("main\n".utf8))
+    XCTAssertEqual(try repo.blob(ref: ":3", path: "a"), Data("feature\n".utf8))
+    XCTAssertThrowsError(try repo.commit(message: "Bad", changes: repo.status()))
+    try repo.run(["merge", "--abort"])
+    XCTAssertNil(try repo.snapshot().operation)
+  }
+  func testMergeCommitKeepsParentsAndUntrackedFiles() throws {
+    try write("base", "base")
+    try commitAll("Initial")
+    try repo.createBranch("feature")
+    try write("feature", "new")
+    try commitAll("Feature")
+    try repo.run(["switch", "main"])
+    try repo.run(["merge", "--no-ff", "--no-commit", "feature"])
+    try write("unrelated", "local notes")
+    XCTAssertThrowsError(try repo.commit(message: "Merge", changes: []))
+    try repo.commit(message: "Merge", changes: repo.status().filter { !$0.isUntracked })
+    XCTAssertEqual(try repo.log()[0].parents.count, 2)
+    XCTAssertNil(try repo.snapshot().operation)
+    XCTAssertEqual(try repo.status().map(\.path), ["unrelated"])
+  }
+  func testRebaseWorktreeAndAnnotatedTag() throws {
+    try write("base", "base")
+    try commitAll("Initial")
+    try repo.createBranch("feature")
+    try write("feature", "feature")
+    try commitAll("Feature")
+    try repo.run(["switch", "main"])
+    try write("main", "main")
+    try commitAll("Main")
+    try repo.run(["switch", "feature"])
+    try repo.run(["rebase", "main"])
+    XCTAssertEqual(try repo.log(LogFilter()).first?.subject, "Feature")
+    try repo.run(["tag", "-a", "-m", "Release", "--", "v1", "HEAD"])
+    XCTAssertEqual(try repo.resolve("v1"), try repo.resolve("HEAD"))
+    let worktree = directory.appendingPathComponent("worktree")
+    try repo.run(["worktree", "add", "-b", "worktree-test", worktree.path, "HEAD"])
+    let other = try GitRepository(url: worktree)
+    XCTAssertEqual(try other.snapshot().currentBranch, "worktree-test")
+    try repo.run(["worktree", "remove", worktree.path])
+  }
+  func testCherryPickRevertAndReset() throws {
+    try write("a", "base\n")
+    try commitAll("Initial")
+    let initial = try repo.resolve("HEAD")
+    try repo.createBranch("feature")
+    try write("b", "feature\n")
+    try commitAll("Feature")
+    let feature = try repo.resolve("HEAD")
+    try repo.run(["switch", "main"])
+    try repo.run(["cherry-pick", feature])
+    XCTAssertTrue(
+      FileManager.default.fileExists(atPath: directory.appendingPathComponent("b").path))
+    try repo.run(["revert", "--no-edit", "HEAD"])
+    XCTAssertFalse(
+      FileManager.default.fileExists(atPath: directory.appendingPathComponent("b").path))
+    try repo.run(["reset", "--soft", initial])
+    XCTAssertEqual(try repo.resolve("HEAD"), initial)
+  }
+  func testDiscardAndUnstage() throws {
+    try write("a", "base\n")
+    try commitAll("Initial")
+    try write("a", "changed\n")
+    try repo.stage(repo.status())
+    try repo.unstage(repo.status())
+    XCTAssertFalse(try repo.status()[0].isStaged)
+    try repo.discard(repo.status())
+    XCTAssertTrue(try repo.status().isEmpty)
+    try write("new", "new")
+    XCTAssertThrowsError(try repo.discard(repo.status()))
+  }
+}
+final class DiffAndGraphTests {
+  func testLineAlignmentAndNumbers() {
+    let diff = TextDiff(
+      before: Data("one\ntwo\nthree\n".utf8), after: Data("one\nchanged\nextra\nthree\n".utf8))
+    XCTAssertEqual(diff.rows.count, 4)
+    XCTAssertEqual(diff.rows[1].kind, .modified)
+    XCTAssertEqual(diff.rows[2].kind, .added)
+    XCTAssertEqual(diff.rows.last?.leftNumber, 3)
+    XCTAssertEqual(diff.rows.last?.rightNumber, 4)
+    XCTAssertEqual(diff.changes, [1])
+  }
+  func testDeletionAndEmptyFiles() {
+    XCTAssertEqual(TextDiff(before: Data("a\n".utf8), after: Data()).rows[0].kind, .removed)
+    XCTAssertEqual(TextDiff(before: Data(), after: Data("a\n".utf8)).rows[0].kind, .added)
+    XCTAssertTrue(TextDiff(before: Data(), after: Data()).identical)
+  }
+  func testBinaryWhitespaceAndFinalNewline() {
+    XCTAssertTrue(TextDiff(before: Data([0, 1]), after: Data()).binary)
+    XCTAssertEqual(
+      TextDiff(before: Data(" a \n".utf8), after: Data("a\n".utf8), ignoreWhitespace: true).changes
+        .count, 0)
+    XCTAssertFalse(TextDiff(before: Data("a".utf8), after: Data("a\n".utf8)).changes.isEmpty)
+    XCTAssertTrue(TextDiff(before: Data(repeating: 65, count: 2_000_001), after: Data()).tooLarge)
+  }
+  func testMergeGraphLanesAndConvergence() {
+    let commits = [
+      Commit(hash: "m", parents: ["a", "b"], author: "T", subject: "Merge"),
+      Commit(hash: "a", parents: ["r"], author: "T", subject: "A"),
+      Commit(hash: "b", parents: ["r"], author: "T", subject: "B"),
+      Commit(hash: "r", parents: [], author: "T", subject: "Root"),
+    ]
+    let rows = CommitGraph.layout(commits)
+    XCTAssertTrue(rows[0].isMerge)
+    XCTAssertEqual(rows[0].edges.count, 2)
+    XCTAssertEqual(rows[1].lane, 0)
+    XCTAssertEqual(rows[2].lane, 1)
+    XCTAssertEqual(rows[3].lane, 0)
+    XCTAssertEqual(rows[2].edges.last?.to, 0)
+  }
+  func testFilteredGraphProjectsHiddenAncestors() {
+    let source = [
+      Commit(hash: "a", parents: ["hidden"], author: "T", subject: "A"),
+      Commit(hash: "hidden", parents: ["b"], author: "T", subject: "Hidden"),
+      Commit(hash: "b", parents: [], author: "T", subject: "B"),
+    ]
+    let rows = CommitGraph.layout([source[0], source[2]], ancestry: source)
+    XCTAssertEqual(rows[0].edges.first?.to, 0)
+    XCTAssertTrue(rows[1].incoming)
+    XCTAssertEqual(rows[1].lane, 0)
+    let disconnected = CommitGraph.layout([source[0], source[2]])
+    XCTAssertFalse(disconnected[1].incoming)
+    XCTAssertEqual(disconnected[1].lane, 0)
+  }
+
+}

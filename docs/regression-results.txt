@@ -1,0 +1,36 @@
+[0/1] Planning build
+Building for debugging...
+[0/5] Write sources
+[2/5] Write swift-version--1AB21518FC5DEDBE.txt
+[4/7] Emitting module GitDeskCore
+[5/7] Compiling GitDeskCore GitRepository.swift
+[6/10] Emitting module GitDeskChecks
+[7/10] Compiling GitDeskChecks main.swift
+[8/10] Compiling GitDeskChecks GitRepositoryTests.swift
+[8/11] Write Objects.LinkFileList
+[9/11] Linking GitDeskChecks
+[10/11] Applying GitDeskChecks
+Build of product 'GitDeskChecks' complete! (1.57s)
+PASS Unborn repository and initial commit
+PASS Selected commit preserves staging
+PASS Failed commit preserves index
+PASS Amend preserves unrelated staging
+PASS NUL paths, Unicode and pathspecs
+PASS Symlinks and preview limits
+PASS Rename parsing and commit
+PASS Index and working diff
+PASS Log filters
+PASS Branch and tag checkout
+PASS Stash and restore
+PASS Push, fetch and pull via local remote
+PASS Conflicts and abort
+PASS Merge commit and untracked files
+PASS Rebase, worktree and annotated tag
+PASS Cherry-pick, revert and reset
+PASS Discard and unstage
+PASS Filtered graph ancestry
+PASS Line alignment
+PASS Deleted and empty files
+PASS Binary, whitespace and final newline
+PASS Merge graph lanes
+22 scenarios, 0 failures

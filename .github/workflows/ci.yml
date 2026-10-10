@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-check:
+    name: Build and check (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Show toolchain
+        run: |
+          swift --version
+          git --version
+          uname -m
+      - name: Run regression checks
+        run: ./scripts/test.sh
+      - name: Build app bundle
+        run: ./scripts/build-app.sh
+      - name: Verify app signature
+        run: codesign --verify --deep --strict dist/GitDesk.app
+      - name: Archive app bundle
+        run: ditto -c -k --sequesterRsrc --keepParent dist/GitDesk.app dist/GitDesk-${{ matrix.os }}.zip
+      - name: Upload development bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: GitDesk-${{ matrix.os }}
+          path: dist/GitDesk-${{ matrix.os }}.zip
+          if-no-files-found: error
+          retention-days: 14

@@ -1,0 +1,137 @@
+# GitDesk
+
+使用 Swift 和 AppKit 构建的 macOS 原生 Git 桌面客户端。
+
+[![CI](https://github.com/Mitse1n/git-desktop/actions/workflows/ci.yml/badge.svg)](https://github.com/Mitse1n/git-desktop/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+![macOS 14+](https://img.shields.io/badge/macOS-14%2B-black)
+![Swift 6.0+](https://img.shields.io/badge/Swift-6.0%2B-orange)
+
+[English](README.md) · 简体中文
+
+在一个原生窗口里浏览提交历史、管理分支、选择文件提交和查看差异。交互参考 IntelliJ IDEA 的 Git 工具，底层调用系统 Git，无第三方包依赖。
+
+**项目状态：早期开发。** 目前按下述步骤从源码构建。生成的应用使用本机 ad-hoc 签名，尚未进行 Developer ID 签名和公证。
+
+![GitDesk 提交历史、分支树、提交图和文件详情](docs/gitdesk-log.png)
+
+*截图来自较早的开发版本，使用演示仓库；当前界面已有调整。*
+
+## 功能
+
+- **历史**：彩色提交图、分支和标签标记、消息/哈希搜索、正则与大小写选项、分支/作者/日期/路径筛选、first-parent 模式。
+- **分支**：本地/远程分支和标签分组、收藏、切换、新建、重命名、删除、比较、merge、rebase 和 worktree。
+- **提交**：按文件勾选、暂存/取消暂存、变更预览、amend、消息历史与 Commit and Push。普通选择文件提交通过临时 index 保留其他文件的暂存状态。
+- **差异**：双栏和 Unified、行号、差异导航、搜索、忽略空白和基础语法着色。
+- **远程**：clone、fetch、仅 fast-forward 的 pull、push 和 remote 管理，复用已有 Git/SSH/credential helper 认证配置。
+- **仓库工具**：初始化和打开仓库、最近仓库、仓库级身份配置、stash、文本冲突处理、cherry-pick、revert、reset、继续/中止操作。
+
+<details>
+<summary>查看提交和差异截图</summary>
+
+![GitDesk 提交面板](docs/gitdesk-commit.png)
+
+![GitDesk 双栏差异](docs/gitdesk-diff.png)
+
+</details>
+
+## 环境要求
+
+- macOS 14 Sonoma 或更新版本。
+- Swift 6.0 或更新版本，通过 Xcode 或兼容的 Xcode Command Line Tools 提供。项目当前使用 Swift 5 语言模式。
+- 系统 Git：`/usr/bin/git`。
+
+如未安装 Apple 开发命令行工具，可先执行安装，再检查版本：
+
+```sh
+xcode-select --install
+swift --version
+git --version
+```
+
+本地验证环境为 Apple Silicon、Swift 6.1.2。构建脚本生成当前机器架构的程序，不生成通用二进制。
+
+## 快速开始
+
+```sh
+git clone https://github.com/Mitse1n/git-desktop.git
+cd git-desktop
+swift run GitDesk /absolute/path/to/your/repository
+```
+
+不传路径时恢复上次打开的仓库，也可以通过 **File → Open Repository…**（`⌘O`）选择仓库。
+
+打包为可双击运行的应用：
+
+```sh
+./scripts/build-app.sh
+open dist/GitDesk.app
+```
+
+`dist/` 和 `.build/` 是本地产物，不包含在源码仓库中。调试包使用 `./scripts/build-app.sh debug`。ad-hoc 签名不等于公证签名，将应用复制到其他机器后，macOS 可能显示安全提示。
+
+## 演示仓库
+
+```sh
+./scripts/create-demo.sh
+swift run GitDesk /tmp/gitdesk-demo
+```
+
+演示数据包含分支、merge、标签和未提交变更。目标目录已存在时不覆盖，也可以给脚本传入其他目标路径。
+
+## 快捷键
+
+| 快捷键 | 操作 |
+| --- | --- |
+| `⌘O` | 打开仓库 |
+| `⌘K` | Commit 面板 |
+| `⇧⌘K` | Push |
+| `⌘T` | Pull |
+| `⌘R` | 刷新 |
+| `⌘L` | 搜索消息/哈希 |
+| `⌘F` | 跳转到 Hash / Branch / Tag |
+| `⌘D` | 打开 Diff |
+| `⌥⌘N` | 新建分支 |
+| `⌘1` / `⌘2` | Log / Console |
+
+## 开发与检查
+
+```sh
+swift build
+./scripts/test.sh
+./scripts/build-app.sh
+codesign --verify --deep --strict dist/GitDesk.app
+```
+
+`scripts/test.sh` 使用独立临时仓库和本地 bare remote 运行回归检查，无需 XCTest，不连接网络远程，也不操作已有项目。请使用该脚本而非 `swift test`：检查以 executable target 实现。
+
+GitHub Actions 会在 Apple Silicon 和 Intel macOS 上执行检查和应用打包。CI 包用于开发验证，架构与运行环境一致，未经公证。
+
+| 路径 | 说明 |
+| --- | --- |
+| `Sources/GitDesk/` | AppKit 窗口、控制器、菜单、主题、Diff 与冲突界面 |
+| `Sources/GitDeskCore/` | Git 进程、输出解析、模型、提交图和文本差异计算 |
+| `Tests/GitDeskCoreTests/` | 回归检查程序 `GitDeskChecks` |
+| `scripts/` | 打包、图标渲染、检查和演示仓库生成 |
+| `docs/` | 截图与[验证记录](docs/verification.md) |
+
+## 当前限制
+
+- 按整个文件提交，尚未支持按行/hunk 暂存、交互式 rebase 编辑器、changelist/shelf、子模块/LFS 专用管理、签名验证、图片 Diff 和托管平台账户集成。
+- 文本冲突编辑适用于 UTF-8；二进制冲突可使用 Accept Ours / Accept Theirs。
+- Diff 预览限制为合计 2 MB 和 20,000 行，单文件读取也限制为 2 MB。Git 子进程最长运行 120 秒。
+- Git 无交互式终端输入，远程操作前需配置认证；失败原因显示在界面/Console。未提供强制 push。
+- 本项目独立开发，与 JetBrains、IntelliJ IDEA 无隶属关系。
+
+## 参与与支持
+
+欢迎缺陷报告、改进、文档和回归用例，中英文均可。
+
+- 提交 PR 前请阅读[贡献指南](CONTRIBUTING.md)。
+- 通过 [GitHub Issues](https://github.com/Mitse1n/git-desktop/issues) 报告问题或讨论建议。
+- 敏感问题处理见 [SECURITY.md](SECURITY.md)。
+- 项目变更见 [CHANGELOG.md](CHANGELOG.md)。
+
+## 许可
+
+项目源码和原创文档采用 [MIT 许可](LICENSE)。第三方产品名称和参考截图的权利归各自所有者，详见 [NOTICE.md](NOTICE.md)。
