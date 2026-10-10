@@ -44,6 +44,23 @@ final class GitRepositoryTests: TestHarness {
     XCTAssertTrue(try repo.status().isEmpty)
     XCTAssertEqual(try repo.changes(in: XCTUnwrap(repo.log().first)).map(\.path), ["hello.txt"])
   }
+  func testIgnoredFilesAreReadOnlyAndCollapsed() throws {
+    try write(".gitignore", "cache/\nsecret*\n*.tmp\n")
+    try write("tracked.tmp", "tracked\n")
+    try repo.run(["add", "-f", "tracked.tmp"])
+    try commitAll("Ignore generated files")
+    try write("cache/deep/output.bin", "generated\n")
+    try write("secret\n中文.txt", "ignored\n")
+    try write("scratch.tmp", "ignored\n")
+    try write("visible.txt", "unversioned\n")
+    try write("tracked.tmp", "modified\n")
+    let index = try repo.runData(["ls-files", "--stage", "-z"])
+    let status = try repo.status()
+    XCTAssertEqual(Set(try repo.ignoredPaths()), ["cache/", "secret\n中文.txt", "scratch.tmp"])
+    XCTAssertEqual(Set(status.map(\.path)), ["tracked.tmp", "visible.txt"])
+    XCTAssertEqual(try repo.runData(["ls-files", "--stage", "-z"]), index)
+    XCTAssertEqual(try repo.status(), status)
+  }
   func testSelectedCommitPreservesUnrelatedStaging() throws {
     try write("a.txt", "one\n")
     try write("b.txt", "one\n")

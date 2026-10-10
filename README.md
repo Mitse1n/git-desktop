@@ -19,13 +19,17 @@ GitDesk brings commit history, branches, selected-file commits, and diffs into o
 
 ## Features
 
-- **History:** colored commit graph with ancestry-ordered tracks and connections meeting commit centers, branch and tag decorations, text/hash search, regex and case options, branch/author/date/path filters, and first-parent history.
+- **History:** drag the message/author/date column boundaries to adjust widths, rounded commit-row hover highlights, in-place expansion of truncated messages/authors/dates with window-bounded wrapping and overflow ellipses, colored commit graph with ancestry-ordered tracks and connections meeting commit centers, branch and tag decorations, a distinct current-branch marker and default favorites for local/origin main and master, text/hash search, regex and case options, branch/author/date/path filters, and first-parent history.
 - **History actions:** undo the latest commit while preserving local/index changes, edit latest or earlier messages, parent/child navigation, patch export, and a read-only repository snapshot browser. A native interactive rebase editor supports reorder, pick, reword, squash, fixup, and drop.
-- **Branches:** grouped local/remote branches and tags, favorites, checkout, create, rename, delete, compare, merge, rebase, and worktrees.
-- **Commits:** grouped changes with inline directory names, click/Space inclusion with mixed group states, a resizable message area, stage/unstage, change previews, amend, message history, and commit and push. View options toggle directory names and file status; commit options set an optional author and sign-off trailer. Ordinary selected-file commits preserve unrelated staged changes using a temporary index.
+- **Branches:** grouped local/remote branches and tags, favorites, checkout, create, rename, delete, compare, merge, rebase, and worktrees. Branch pane settings control directory grouping, tag visibility, and single-click filtering or navigation to a branch head.
+- **View options:** independent Log, branch, historical-file, and Commit menus. Log options control compact references, tag names, reference placement, author/date columns, and highlighting. Historical files support directory/module grouping (Control-P/Control-M), commit details visibility, and an embedded diff preview with file navigation. Display choices persist, and changing Log appearance retains selected commits.
+- **Commits:** changes grouped by directory or detected IDEA module, click/Space inclusion with mixed group states, a resizable message area, stage/unstage, change previews, amend, message history, and commit and push. View options group by Directory/Module and show ignored files separately (ignored entries cannot be included in commits; their context menu offers Copy Path and Show in Finder while disabling diff, stage, unstage, and rollback); Module grouping reads IDEA module definitions and uses the repository as a single module when none exist; commit options set an optional author and sign-off trailer. Ordinary selected-file commits preserve unrelated staged changes using a temporary index.
 - **Diffs:** side-by-side and unified views, line numbers, change navigation, search, whitespace options, and basic syntax highlighting.
 - **Remotes:** clone, fetch, fast-forward-only pull, push, and remote configuration. Authentication uses existing Git/SSH/credential-helper configuration.
+
 - **Repository tools:** initialize/open repositories, recent repositories, repository-local identity, stash, text conflict resolution, cherry-pick, revert, reset, and continue/abort operations.
+
+History refresh preserves multiple selections by revision. The branch toolbar star toggles the selected favorite, and its target button locates that branch's tip in the log. Amend reads HEAD even when it is filtered out and restores the previous draft when cancelled. Commit previews support previous/next file navigation, and whitespace options stay active across files and layout changes.
 
 <details>
 <summary>Commit and diff screenshots</summary>

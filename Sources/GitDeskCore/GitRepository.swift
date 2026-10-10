@@ -132,6 +132,11 @@ public final class GitRepository {
   public func status() throws -> [FileChange] {
     Self.parseStatus(try runData(["status", "--porcelain=v1", "-z", "--untracked-files=all"]))
   }
+  public func ignoredPaths() throws -> [String] {
+    // Keep ignored directories collapsed instead of walking build artifacts file by file.
+    try runData(["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"])
+      .split(separator: 0).map { String(decoding: $0, as: UTF8.self) }
+  }
   public func log(_ filter: LogFilter = LogFilter()) throws -> [Commit] {
     guard hasHead else { return [] }
     var args = [

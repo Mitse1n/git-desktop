@@ -16,8 +16,11 @@ final class DiffViewController: NSViewController, NSTableViewDataSource, NSTable
   var before = Data(), after = Data()
   var diff: TextDiff?
   var token = 0
+  private var contentToken = 0
+  private var hasContents = false
   var changedIndex = -1
   var nextFile: (() -> Void)?, previousFile: (() -> Void)?
+  var compact = false
   override func loadView() {
     view = Surface()
     configureTable(table)
@@ -27,7 +30,8 @@ final class DiffViewController: NSViewController, NSTableViewDataSource, NSTable
     table.dataSource = self
     table.setAccessibilityLabel("Side-by-side diff")
     table.columnAutoresizingStyle = .noColumnAutoresizing
-    layoutToggle.selectedSegment = 0
+    layoutToggle.selectedSegment = compact ? 1 : 0
+    if compact { layoutToggle.setLabel("Split", forSegment: 0) }
     layoutToggle.target = self
     layoutToggle.action = #selector(optionsChanged)
     layoutToggle.controlSize = .small
@@ -39,27 +43,52 @@ final class DiffViewController: NSViewController, NSTableViewDataSource, NSTable
     search.placeholderString = "Find in diff"
     search.target = self
     search.action = #selector(findText)
-    search.widthAnchor.constraint(equalToConstant: 140).isActive = true
-    let toolbar = row(
-      [
-        ActionButton(symbol: "arrow.up", tooltip: "Previous Difference") { [weak self] in
+    search.widthAnchor.constraint(equalToConstant: compact ? 95 : 140).isActive = true
+    let navigation: [NSView] = [
+        ActionButton(symbol: "arrow.up", tooltip: "Previous Difference", size: compact ? 20 : 30) { [weak self] in
           self?.navigate(-1)
         },
-        ActionButton(symbol: "arrow.down", tooltip: "Next Difference") { [weak self] in
+        ActionButton(symbol: "arrow.down", tooltip: "Next Difference", size: compact ? 20 : 30) { [weak self] in
           self?.navigate(1)
         },
-        ActionButton(symbol: "chevron.left", tooltip: "Previous File") { [weak self] in
+        ActionButton(symbol: "chevron.left", tooltip: "Previous File", size: compact ? 20 : 30) { [weak self] in
           self?.previousFile?()
         },
-        ActionButton(symbol: "chevron.right", tooltip: "Next File") { [weak self] in
+        ActionButton(symbol: "chevron.right", tooltip: "Next File", size: compact ? 20 : 30) { [weak self] in
           self?.nextFile?()
-        }, titleLabel, NSView(), countLabel, layoutToggle,
-      ], spacing: 4)
-    let options = row(
-      [
+        }]
+    let toolbar: NSStackView
+    let options: NSStackView
+    if compact {
+      titleLabel.lineBreakMode = .byTruncatingMiddle
+      titleLabel.usesSingleLineMode = true
+      countLabel.isHidden = true
+      whitespace.title = "Whitespace"
+      styleCheckbox(whitespace)
+      whitespace.setAccessibilityLabel("Ignore whitespace")
+      whitespace.toolTip = "Ignore whitespace when comparing changes"
+      whitespace.translatesAutoresizingMaskIntoConstraints = false
+      whitespace.widthAnchor.constraint(equalToConstant: 90).isActive = true
+      whitespace.heightAnchor.constraint(equalToConstant: 22).isActive = true
+      toolbar = NSStackView(views: [row([titleLabel, NSView()]),
+        row(navigation + [NSView(), layoutToggle], spacing: 2)])
+      toolbar.orientation = .vertical
+      toolbar.distribution = .fillEqually
+      toolbar.alignment = .width
+      toolbar.spacing = 2
+      options = NSStackView(views: [row([leftLabel, NSView(), rightLabel]),
+        row([whitespace, NSView(), search], spacing: 4)])
+      options.orientation = .vertical
+      options.distribution = .fillEqually
+      options.alignment = .width
+      options.spacing = 2
+    } else {
+      toolbar = row(navigation + [titleLabel, NSView(), countLabel, layoutToggle], spacing: 4)
+      options = row([
         leftLabel, NSView(), labeledCheckbox(whitespace, title: "Ignore whitespace"), search,
         NSView(), rightLabel,
       ], spacing: 10)
+    }
     let container = Surface()
     toolbar.translatesAutoresizingMaskIntoConstraints = false
     options.translatesAutoresizingMaskIntoConstraints = false
@@ -77,11 +106,11 @@ final class DiffViewController: NSViewController, NSTableViewDataSource, NSTable
       toolbar.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 8),
       toolbar.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
       toolbar.topAnchor.constraint(equalTo: container.topAnchor),
-      toolbar.heightAnchor.constraint(equalToConstant: 40),
+      toolbar.heightAnchor.constraint(equalToConstant: compact ? 56 : 40),
       options.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
       options.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
       options.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
-      options.heightAnchor.constraint(equalToConstant: 32),
+      options.heightAnchor.constraint(equalToConstant: compact ? 48 : 32),
       scroll.topAnchor.constraint(equalTo: options.bottomAnchor, constant: 1),
       scroll.leadingAnchor.constraint(equalTo: container.leadingAnchor),
       scroll.trailingAnchor.constraint(equalTo: container.trailingAnchor),
@@ -119,13 +148,20 @@ final class DiffViewController: NSViewController, NSTableViewDataSource, NSTable
   }
   deinit { NotificationCenter.default.removeObserver(self) }
   func clear() {
+    contentToken += 1
     token += 1
+    hasContents = false
     before = Data()
     after = Data()
     diff = nil
     unifiedCache = []
     table.reloadData()
     titleLabel.stringValue = "Diff"
+    titleLabel.toolTip = nil
+    countLabel.stringValue = ""
+    leftLabel.stringValue = ""
+    rightLabel.stringValue = ""
+    changedIndex = -1
     emptyLabel.stringValue = "Select a file to view its changes"
     emptyLabel.isHidden = false
   }
@@ -150,12 +186,17 @@ final class DiffViewController: NSViewController, NSTableViewDataSource, NSTable
     comparison: (String, String)? = nil
   ) {
     _ = view
+    contentToken += 1
     token += 1
-    let current = token
+    let current = contentToken
+    hasContents = false
+    before = Data()
+    after = Data()
     diff = nil
     unifiedCache = []
     table.reloadData()
     titleLabel.stringValue = change.path
+    titleLabel.toolTip = change.path
     emptyLabel.stringValue = "Loading diff…"
     emptyLabel.isHidden = false
     countLabel.stringValue = ""
@@ -173,16 +214,16 @@ final class DiffViewController: NSViewController, NSTableViewDataSource, NSTable
           ? try repository.workingDiff(change: change)
           : try repository.contents(
             change: change, commit: commit, staged: staged, comparison: comparison)
-        let diff = TextDiff(before: pair.0, after: pair.1)
         DispatchQueue.main.async {
-          guard let self, self.token == current else { return }
+          guard let self, self.contentToken == current else { return }
           self.before = pair.0
           self.after = pair.1
-          self.setDiff(diff)
+          self.hasContents = true
+          self.calculateDiff()
         }
       } catch {
         DispatchQueue.main.async {
-          guard let self, self.token == current else { return }
+          guard let self, self.contentToken == current else { return }
           self.emptyLabel.stringValue = error.localizedDescription
         }
       }
@@ -195,8 +236,9 @@ final class DiffViewController: NSViewController, NSTableViewDataSource, NSTable
     view.layoutSubtreeIfNeeded()
     fitColumnsToViewport()
     table.reloadData()
-    countLabel.stringValue =
-      "\(diff.changes.count) " + (diff.changes.count == 1 ? "difference" : "differences")
+    countLabel.stringValue = diff.changes.isEmpty && !diff.identical && !diff.rows.isEmpty
+      ? "Differences ignored"
+      : "\(diff.changes.count) " + (diff.changes.count == 1 ? "difference" : "differences")
     emptyLabel.stringValue =
       diff.binary
       ? "Binary file · \(before.count) → \(after.count) bytes"
@@ -207,6 +249,11 @@ final class DiffViewController: NSViewController, NSTableViewDataSource, NSTable
   }
   @objc func optionsChanged() {
     configureColumns()
+    // Layout changes must not cancel a pending file read or compare stale data.
+    guard hasContents else { return }
+    calculateDiff()
+  }
+  private func calculateDiff() {
     token += 1
     let current = token
     let before = self.before

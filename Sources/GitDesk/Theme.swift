@@ -8,6 +8,7 @@ enum Theme {
   static let text = NSColor(hex: 0xBCBEC4)
   static let muted = NSColor(hex: 0x777A80)
   static let selection = NSColor(hex: 0x22273D)
+  static let hover = NSColor.white.withAlphaComponent(0.07)
   static let blue = NSColor(hex: 0x6B9BFA)
   static let green = NSColor(hex: 0x79A66A)
   static let red = NSColor(hex: 0xC77C79)
@@ -342,6 +343,11 @@ func configureTable(_ table: NSTableView) {
 }
 class MenuTable: NSTableView {
   var menuProvider: (() -> NSMenu)?
+  func reloadKeepingSelection() {
+    let selection = selectedRowIndexes
+    reloadData()
+    selectRowIndexes(selection, byExtendingSelection: false)
+  }
   override func menu(for event: NSEvent) -> NSMenu? {
     let row = row(at: convert(event.locationInWindow, from: nil))
     if row >= 0 && !selectedRowIndexes.contains(row) {
@@ -355,24 +361,210 @@ final class LogTable: MenuTable {
   var graphWidth: CGFloat = 44
   var graphLaneCounts: [Int] = []
   var authorWidth: CGFloat = 90
+  private(set) var hoveredRow = -1
   private var fitting = false
+  private struct ColumnDrag {
+    let column: Int
+    let startX: CGFloat
+    let widths: [CGFloat]
+  }
+  private var columnDrag: ColumnDrag?
+  private var resizedAuthorWidth: CGFloat?
+  private var resizedDateWidth: CGFloat?
   private var scrollObserver: NSObjectProtocol?
+  private var hoverTrackingArea: NSTrackingArea?
+  private var windowObservers: [NSObjectProtocol] = []
+  private var expansionView: LogTextExpansionView?
+  private weak var expansionSource: NSView?
+  private var expansionAnchor = NSRect.zero
+  private var expansionBounds = NSRect.zero
+  private var expansionToolTip: String?
+  private func resizeBoundary(at point: NSPoint) -> Int? {
+    guard tableColumns.count == 4, visibleRect.contains(point) else { return nil }
+    let visible = tableColumns.indices.filter { !tableColumns[$0].isHidden }
+    return visible.dropLast().first { $0 != 0 && abs(point.x - rect(ofColumn: $0).maxX) <= 4 }
+  }
+  override func hitTest(_ point: NSPoint) -> NSView? {
+    if resizeBoundary(at: convert(point, from: superview)) != nil { return self }
+    return super.hitTest(point)
+  }
+  override func resetCursorRects() {
+    super.resetCursorRects()
+    guard tableColumns.count == 4 else { return }
+    let visible = tableColumns.indices.filter { !tableColumns[$0].isHidden }
+    for column in visible.dropLast() where column != 0 {
+      let strip = NSRect(x: rect(ofColumn: column).maxX - 4, y: visibleRect.minY,
+        width: 8, height: visibleRect.height).intersection(visibleRect)
+      if !strip.isEmpty { addCursorRect(strip, cursor: .resizeLeftRight) }
+    }
+  }
+  override func updateTrackingAreas() {
+    super.updateTrackingAreas()
+    if let hoverTrackingArea { removeTrackingArea(hoverTrackingArea) }
+    let area = NSTrackingArea(rect: .zero,
+      options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect],
+      owner: self, userInfo: nil)
+    addTrackingArea(area)
+    hoverTrackingArea = area
+    updateHoveredRow()
+  }
+  override func mouseEntered(with event: NSEvent) { updateHoveredRow(at: event.locationInWindow) }
+  override func mouseMoved(with event: NSEvent) { updateHoveredRow(at: event.locationInWindow) }
+  override func mouseExited(with event: NSEvent) {
+    setHoveredRow(-1)
+    dismissTextExpansion()
+  }
+  override func mouseDown(with event: NSEvent) {
+    dismissTextExpansion()
+    if let column = resizeBoundary(at: convert(event.locationInWindow, from: nil)) {
+      columnDrag = ColumnDrag(column: column, startX: event.locationInWindow.x,
+        widths: tableColumns.map(\.width))
+      NSCursor.resizeLeftRight.set()
+      return
+    }
+    super.mouseDown(with: event)
+  }
+  override func mouseDragged(with event: NSEvent) {
+    guard let drag = columnDrag else { super.mouseDragged(with: event); return }
+    guard let next = tableColumns.indices.first(where: { $0 > drag.column && !tableColumns[$0].isHidden }) else { return }
+    let left = tableColumns[drag.column], right = tableColumns[next]
+    let leftWidth = drag.widths[drag.column], rightWidth = drag.widths[next]
+    let minimum = max(left.minWidth - leftWidth, rightWidth - right.maxWidth)
+    let maximum = min(left.maxWidth - leftWidth, rightWidth - right.minWidth)
+    let delta = min(max(event.locationInWindow.x - drag.startX, minimum), maximum)
+    guard abs(delta) > 0.5 || left.width != leftWidth else { return }
+    left.width = leftWidth + delta
+    right.width = rightWidth - delta
+    resizedAuthorWidth = tableColumns[2].width
+    resizedDateWidth = tableColumns[3].width
+    window?.invalidateCursorRects(for: self)
+    NSCursor.resizeLeftRight.set()
+  }
+  override func mouseUp(with event: NSEvent) {
+    guard columnDrag != nil else { super.mouseUp(with: event); return }
+    columnDrag = nil
+    fitColumns()
+    window?.invalidateCursorRects(for: self)
+    updateHoveredRow(at: event.locationInWindow)
+  }
+  override func keyDown(with event: NSEvent) {
+    dismissTextExpansion()
+    super.keyDown(with: event)
+  }
+  override func menu(for event: NSEvent) -> NSMenu? {
+    dismissTextExpansion()
+    return super.menu(for: event)
+  }
+  override func scrollWheel(with event: NSEvent) {
+    dismissTextExpansion()
+    super.scrollWheel(with: event)
+    updateHoveredRow(at: event.locationInWindow)
+  }
+  private func updateHoveredRow(at location: NSPoint? = nil) {
+    guard columnDrag == nil else { return }
+    guard let window, !isHiddenOrHasHiddenAncestor else {
+      setHoveredRow(-1)
+      dismissTextExpansion()
+      return
+    }
+    let point = convert(location ?? window.mouseLocationOutsideOfEventStream, from: nil)
+    setHoveredRow(visibleRect.contains(point) ? row(at: point) : -1)
+    if resizeBoundary(at: point) != nil { dismissTextExpansion() }
+    else { updateTextExpansion(at: point) }
+  }
+  private func updateTextExpansion(at point: NSPoint) {
+    let column = column(at: point)
+    guard hoveredRow >= 0, column >= 0, let window, window.isKeyWindow,
+      let content = window.contentView,
+      let cell = view(atColumn: column, row: hoveredRow, makeIfNecessary: false),
+      let text = (cell as? LogExpandableCell)?.hoverText,
+      text.rect.contains(cell.convert(point, from: self)) else {
+      dismissTextExpansion()
+      return
+    }
+    let anchor = content.convert(text.rect, from: cell)
+    let available = content.convert(window.contentLayoutRect, from: nil)
+      .intersection(content.bounds).insetBy(dx: 2, dy: 2)
+    if expansionSource === cell && expansionAnchor == anchor && expansionBounds == available { return }
+    guard text.isTruncated,
+      let layout = LogTextExpansionLayout.make(text: text.text, font: text.font,
+        sourceRect: anchor, containerBounds: available, flipped: content.isFlipped) else {
+      dismissTextExpansion()
+      return
+    }
+    dismissTextExpansion()
+    let expanded = LogTextExpansionView(layout: layout, textColor: text.color,
+      fillColor: Theme.chrome, borderColor: Theme.line)
+    expansionView = expanded
+    expansionSource = cell
+    expansionAnchor = anchor
+    expansionBounds = available
+    expansionToolTip = cell.toolTip
+    cell.toolTip = nil
+    content.addSubview(expanded, positioned: .above, relativeTo: nil)
+  }
+  private func dismissTextExpansion() {
+    expansionSource?.toolTip = expansionToolTip
+    expansionToolTip = nil
+    expansionView?.removeFromSuperview()
+    expansionView = nil
+    expansionSource = nil
+  }
+  private func setHoveredRow(_ row: Int) {
+    guard row != hoveredRow else { return }
+    let previous = hoveredRow
+    hoveredRow = row
+    for index in [previous, row] where index >= 0 && index < numberOfRows {
+      // Only invalidate the old and new rows; mouse movement never reloads the log.
+      (rowView(atRow: index, makeIfNecessary: false) as? SelectionRow)?.isHovered = index == row
+    }
+  }
+  override func reloadData() {
+    columnDrag = nil
+    dismissTextExpansion()
+    setHoveredRow(-1)
+    super.reloadData()
+    updateHoveredRow()
+  }
   override func viewDidMoveToWindow() {
     super.viewDidMoveToWindow()
+    dismissTextExpansion()
+    window?.acceptsMouseMovedEvents = true
+    windowObservers.forEach { NotificationCenter.default.removeObserver($0) }
+    windowObservers = []
+    if let window {
+      for name in [NSWindow.willCloseNotification, NSWindow.didResignKeyNotification,
+        NSWindow.willMiniaturizeNotification, NSWindow.didResizeNotification, NSWindow.didMoveNotification] {
+        windowObservers.append(NotificationCenter.default.addObserver(
+          forName: name, object: window, queue: .main
+        ) { [weak self] _ in
+          self?.columnDrag = nil
+          self?.dismissTextExpansion()
+          if let self { self.window?.invalidateCursorRects(for: self) }
+        })
+      }
+    }
     if let scrollObserver { NotificationCenter.default.removeObserver(scrollObserver) }
     scrollObserver = nil
     if window != nil, let clip = enclosingScrollView?.contentView {
       clip.postsBoundsChangedNotifications = true
       scrollObserver = NotificationCenter.default.addObserver(
         forName: NSView.boundsDidChangeNotification, object: clip, queue: .main
-      ) { [weak self] _ in self?.fitColumns() }
+      ) { [weak self] _ in
+        self?.dismissTextExpansion()
+        self?.fitColumns()
+        self?.updateHoveredRow()
+      }
     }
+    updateHoveredRow()
   }
   deinit {
     if let scrollObserver { NotificationCenter.default.removeObserver(scrollObserver) }
+    windowObservers.forEach { NotificationCenter.default.removeObserver($0) }
+    expansionView?.removeFromSuperview()
   }
   func fitColumns() {
-    guard !fitting, tableColumns.count == 4,
+    guard !fitting, columnDrag == nil, tableColumns.count == 4,
       let width = enclosingScrollView?.contentSize.width, width > 0 else { return }
     fitting = true
     let visible = rows(in: visibleRect)
@@ -382,15 +574,22 @@ final class LogTable: MenuTable {
       let lanes = graphLaneCounts[visible.location..<end].max() ?? 0
       requiredGraphWidth = max(graphWidth, CGFloat(lanes) * 15 + 8)
     }
-    let widths = [requiredGraphWidth, max(100, width - requiredGraphWidth - authorWidth - 126), authorWidth, 126]
-    for (column, value) in zip(tableColumns, widths) where abs(column.width - value) > 0.5 {
+    let author = tableColumns[2].isHidden ? 0 : resizedAuthorWidth ?? authorWidth
+    let date = tableColumns[3].isHidden ? 0 : resizedDateWidth ?? 126
+    let widths = [requiredGraphWidth, max(tableColumns[1].minWidth,
+      width - requiredGraphWidth - author - date), author, date]
+    var changed = false
+    for (column, value) in zip(tableColumns, widths) where !column.isHidden && abs(column.width - value) > 0.5 {
       column.width = value
+      changed = true
     }
     fitting = false
+    if changed { window?.invalidateCursorRects(for: self) }
   }
   override func layout() {
     super.layout()
     fitColumns()
+    updateHoveredRow()
   }
 }
 
@@ -465,6 +664,16 @@ final class FilterPopup: NSPopUpButton {
 }
 final class MenuOutline: NSOutlineView {
   var menuProvider: (() -> NSMenu)?
+  var toggleGrouping: ((Bool) -> Void)?
+  override func keyDown(with event: NSEvent) {
+    if let toggleGrouping,
+      event.modifierFlags.intersection([.command, .control, .option, .shift]) == .control,
+      event.charactersIgnoringModifiers == "p" || event.charactersIgnoringModifiers == "m" {
+      toggleGrouping(event.charactersIgnoringModifiers == "p")
+      return
+    }
+    super.keyDown(with: event)
+  }
   override func menu(for event: NSEvent) -> NSMenu? {
     let row = row(at: convert(event.locationInWindow, from: nil))
     if row >= 0 { selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false) }
@@ -475,11 +684,16 @@ final class SelectionRow: NSTableRowView {
   var usesInactiveColor = true
   var cornerRadius: CGFloat = 0
   var backgroundTint: NSColor?
+  var isHovered = false { didSet { if oldValue != isHovered { needsDisplay = true } } }
   override func drawBackground(in dirtyRect: NSRect) {
     if let backgroundTint {
       backgroundTint.setFill()
       bounds.fill()
     } else { super.drawBackground(in: dirtyRect) }
+    if isHovered && !isSelected {
+      Theme.hover.setFill()
+      NSBezierPath(roundedRect: bounds.insetBy(dx: 4, dy: 0), xRadius: 4, yRadius: 4).fill()
+    }
   }
   override func drawSelection(in dirtyRect: NSRect) {
     (isEmphasized || !usesInactiveColor ? NSColor(hex: 0x2E436E) : NSColor(hex: 0x33353A)).setFill()

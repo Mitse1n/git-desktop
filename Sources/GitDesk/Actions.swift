@@ -121,6 +121,7 @@ extension RepositoryController {
   }
   func branchMenu(_ branch: Branch) -> NSMenu {
     let menu = NSMenu()
+    menu.autoenablesItems = false
     menu.addItem(
       menuItem("Checkout", enabled: !branch.current) { [weak self] in
         self?.perform("Checkout \(branch.name)", work: { try $0.checkout(branch) })
@@ -170,16 +171,7 @@ extension RepositoryController {
     menu.addItem(.separator())
     menu.addItem(
       menuItem(favoriteRefs.contains(branch.fullRef) ? "Unmark as Favorite" : "Mark as Favorite") {
-        [weak self] in
-        guard let self else { return }
-        var refs = self.favoriteRefs
-        if refs.contains(branch.fullRef) {
-          refs.remove(branch.fullRef)
-        } else {
-          refs.insert(branch.fullRef)
-        }
-        self.favoriteRefs = refs
-        self.rebuildBranches()
+        [weak self] in self?.toggleFavorite(branch)
       })
     if branch.kind == .local {
       menu.addItem(menuItem("Rename…") { [weak self] in self?.renameBranch(branch) })
@@ -305,6 +297,7 @@ extension RepositoryController {
   }
   func commitContextMenu() -> NSMenu {
     let menu = NSMenu()
+    menu.autoenablesItems = false
     guard let commit = selectedCommit else { return menu }
     menu.addItem(
       menuItem("Copy Revision Number") {
@@ -420,22 +413,28 @@ extension RepositoryController {
   }
   func fileContextMenu(working: Bool) -> NSMenu {
     let menu = NSMenu()
+    menu.autoenablesItems = false
+    let selection = working ? workingSelection() : selectedDetailFiles
+    let paths = working ? Array(Set(changesTable.selectedRowIndexes.flatMap {
+      workingRows.indices.contains($0) ? workingRows[$0].paths : []
+    })).sorted() : selection.map(\.path)
+    let canModify = !selection.isEmpty && !isBusy
     menu.addItem(
-      menuItem("Show Diff") { [weak self] in working ? self?.showWorkingDiff() : self?.showDiff() })
+      menuItem("Show Diff", enabled: !selection.isEmpty) { [weak self] in working ? self?.showWorkingDiff() : self?.showDiff() })
     if working {
       menu.addItem(
-        menuItem("Stage") { [weak self] in
+        menuItem("Stage", enabled: canModify) { [weak self] in
           guard let self else { return }
           let files = self.workingSelection()
           if !files.isEmpty { self.perform("Stage files", work: { try $0.stage(files) }) }
         })
       menu.addItem(
-        menuItem("Unstage") { [weak self] in
+        menuItem("Unstage", enabled: canModify) { [weak self] in
           guard let self else { return }
           let files = self.workingSelection()
           if !files.isEmpty { self.perform("Unstage files", work: { try $0.unstage(files) }) }
         })
-      menu.addItem(menuItem("Rollback…") { [weak self] in self?.rollback() })
+      menu.addItem(menuItem("Rollback…", enabled: canModify) { [weak self] in self?.rollback() })
       if workingSelection().contains(where: \.isConflicted) {
         menu.addItem(menuItem("Resolve Conflicts…") { [weak self] in self?.resolveConflicts() })
         menu.addItem(menuItem("Accept Ours") { [weak self] in self?.acceptConflict("ours") })
@@ -449,18 +448,15 @@ extension RepositoryController {
       }
     }
     menu.addItem(
-      menuItem("Copy Path") { [weak self] in
-        guard let self else { return }
-        let files = working ? self.workingSelection() : self.selectedDetailFiles
+      menuItem("Copy Path", enabled: !paths.isEmpty) {
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(files.map(\.path).joined(separator: "\n"), forType: .string)
+        NSPasteboard.general.setString(paths.joined(separator: "\n"), forType: .string)
       })
     menu.addItem(
-      menuItem("Show in Finder") { [weak self] in
+      menuItem("Show in Finder", enabled: !paths.isEmpty) { [weak self] in
         guard let self, let repo = self.repository else { return }
-        let files = working ? self.workingSelection() : self.selectedDetailFiles
         NSWorkspace.shared.activateFileViewerSelecting(
-          files.map { repo.workingDirectory.appendingPathComponent($0.path) })
+          paths.map { repo.workingDirectory.appendingPathComponent($0) })
       })
     return menu
   }
@@ -485,12 +481,27 @@ extension RepositoryController {
       })
   }
   @objc func amendChanged() {
-    guard amend.state == .on else { return }
-    let old = snapshot?.commits.first(where: {
-      $0.decorations.contains(where: { $0.hasPrefix("HEAD") })
-    })
-    if commitMessage.string.isEmpty, let old {
-      commitMessage.string = old.subject + (old.body.isEmpty ? "" : "\n\n" + old.body)
+    amendLoadToken += 1
+    let request = amendLoadToken
+    guard amend.state == .on else {
+      if let draft = amendDraft { commitMessage.string = draft }
+      amendDraft = nil
+      return
+    }
+    guard let repo = repository else { return }
+    let initialMessage = commitMessage.string
+    if amendDraft == nil { amendDraft = initialMessage }
+    let currentEpoch = epoch
+    queue.async { [weak self] in
+      let result = Result { try repo.commit(at: "HEAD") }
+      DispatchQueue.main.async {
+        guard let self, self.epoch == currentEpoch, self.amendLoadToken == request,
+          self.amend.state == .on, self.commitMessage.string == initialMessage else { return }
+        switch result {
+        case .success(let commit): self.commitMessage.string = commit.fullMessage
+        case .failure(let error): self.statusLabel.stringValue = error.localizedDescription
+        }
+      }
     }
   }
   func commitChanges(push shouldPush: Bool) {
@@ -519,6 +530,8 @@ extension RepositoryController {
         history.insert(message, at: 0)
         UserDefaults.standard.set(Array(history.prefix(20)), forKey: "commitMessages")
         self.commitMessage.string = ""
+        self.amendDraft = nil
+        self.amendLoadToken += 1
         self.amend.state = .off
         self.selectedPaths = []
         if shouldPush { self.push() }
@@ -709,78 +722,191 @@ extension RepositoryController {
     branchPanel.isHidden = branchHidden
     split.adjustSubviews()
   }
-  func detailsOptions() {
+  func detailsOptions(anchor: NSView? = nil) {
     let menu = NSMenu()
-    menu.addItem(
-      menuItem("Copy Commit Details") { [weak self] in
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(self?.detailsText.string ?? "", forType: .string)
-      })
-    popup(menu)
+    menu.addItem(NSMenuItem.sectionHeader(title: "Group By"))
+    menu.addItem(option("Directory", checked: groupDetailDirectories, key: "p") { [weak self] in
+      self?.groupDetailDirectories.toggle()
+      self?.rebuildDetailFiles()
+    })
+    menu.addItem(option("Module", checked: groupDetailModules, key: "m") { [weak self] in
+      self?.groupDetailModules.toggle()
+      self?.rebuildDetailFiles()
+    })
+    menu.addItem(.separator())
+    menu.addItem(option("Show Details", checked: showDetails) { [weak self] in
+      self?.showDetails.toggle()
+      self?.updateDetailVisibility()
+    })
+    menu.addItem(option("Show Diff Preview", checked: showDetailDiff) { [weak self] in
+      self?.showDetailDiff.toggle()
+      self?.updateDetailVisibility()
+    })
+    popup(menu, anchor: anchor)
   }
-  func filterMenu() {
+  func updateDetailVisibility() {
+    detailTextArea?.isHidden = !showDetails
+    detailDiff?.view.isHidden = !showDetailDiff
+    detailsSplit?.adjustSubviews()
+    detailFilesSplit?.adjustSubviews()
+    if showDetailDiff, let split = detailFilesSplit, split.subviews[1].frame.height < 160 {
+      split.setPosition(min(120, split.bounds.height * 0.35), ofDividerAt: 0)
+    }
+    previewDetailDiff()
+  }
+  func previewDetailDiff() {
+    guard showDetailDiff, let repository, selectedCommit != nil || comparison != nil,
+      comparison != nil || loadedDetailHash == selectedCommit?.hash,
+      let file = selectedDetailFiles.first ?? detailFiles.first else {
+      detailDiff?.clear()
+      return
+    }
+    detailDiff?.load(repository: repository, change: file,
+      commit: comparison == nil ? selectedCommit : nil, comparison: comparison)
+  }
+  func navigateDetailDiff(_ delta: Int) {
+    guard !detailFiles.isEmpty else { return }
+    let current = detailFiles.firstIndex { $0.path == detailDiff?.titleLabel.stringValue } ?? 0
+    let next = min(max(current + delta, 0), detailFiles.count - 1)
+    filesTable.expandItem(nil, expandChildren: true)
+    if let row = (0..<filesTable.numberOfRows).first(where: {
+      (filesTable.item(atRow: $0) as? FileNode)?.file?.path == detailFiles[next].path
+    }) {
+      filesTable.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+      filesTable.scrollRowToVisible(row)
+    }
+  }
+  private func option(_ title: String, checked: Bool, key: String = "",
+    handler: @escaping () -> Void) -> NSMenuItem {
+    let item = menuItem(title, handler: handler)
+    item.state = checked ? .on : .off
+    if !key.isEmpty { item.keyEquivalent = key; item.keyEquivalentModifierMask = .control }
+    return item
+  }
+  func reloadLogAppearance() {
+    logTable.reloadKeepingSelection()
+  }
+  func logViewOptions(anchor: NSView? = nil) {
     let menu = NSMenu()
-    let compact = menuItem("Compact Reference Names") { [weak self] in
+    menu.addItem(NSMenuItem.sectionHeader(title: "Show"))
+    menu.addItem(option("Compact References View", checked: compactReferences) { [weak self] in
       self?.compactReferences.toggle()
-      self?.logTable.reloadData()
+      self?.reloadLogAppearance()
+    })
+    menu.addItem(option("Tag Names", checked: showLogTagNames) { [weak self] in
+      self?.showLogTagNames.toggle()
+      self?.reloadLogAppearance()
+    })
+    menu.addItem(option("References on the Left", checked: referencesOnLeft) { [weak self] in
+      self?.referencesOnLeft.toggle()
+      self?.reloadLogAppearance()
+    })
+    let columns = NSMenu()
+    for (id, title) in [("author", "Author"), ("date", "Date")] {
+      guard let column = logTable.tableColumn(withIdentifier: .init(id)) else { continue }
+      columns.addItem(option(title, checked: !column.isHidden) { [weak self, weak column] in
+        guard let self, let column else { return }
+        column.isHidden.toggle()
+        UserDefaults.standard.set(column.isHidden, forKey: "logHideColumn." + id)
+        self.logTable.fitColumns()
+        self.reloadLogAppearance()
+      })
     }
-    compact.state = compactReferences ? .on : .off
-    menu.addItem(compact)
-    let highlight = menuItem("Highlight Current Branch") { [weak self] in
+    let columnItem = NSMenuItem(title: "Columns", action: nil, keyEquivalent: "")
+    columnItem.submenu = columns
+    menu.addItem(columnItem)
+    menu.addItem(.separator())
+    menu.addItem(NSMenuItem.sectionHeader(title: "Highlight"))
+    menu.addItem(option("My Commits", checked: highlightMyCommits) { [weak self] in
+      self?.highlightMyCommits.toggle()
+      self?.reloadLogAppearance()
+    })
+    menu.addItem(option("Merge Commits", checked: highlightMergeCommits) { [weak self] in
+      self?.highlightMergeCommits.toggle()
+      self?.reloadLogAppearance()
+    })
+    menu.addItem(option("Current Branch", checked: highlightCurrentBranch) { [weak self] in
       self?.highlightCurrentBranch.toggle()
-      self?.logTable.reloadData()
-    }
-    highlight.state = highlightCurrentBranch ? .on : .off
-    menu.addItem(highlight)
+      self?.reloadLogAppearance()
+    })
+    popup(menu, anchor: anchor)
+  }
+  func branchViewOptions(anchor: NSView? = nil) {
+    let menu = NSMenu()
+    menu.addItem(NSMenuItem.sectionHeader(title: "On Single Click"))
+    menu.addItem(option("Update Branch Filter", checked: branchClickUpdatesFilter) { [weak self] in
+      self?.branchClickUpdatesFilter.toggle()
+    })
+    menu.addItem(option("Navigate Log to Branch Head", checked: branchClickNavigates) { [weak self] in
+      self?.branchClickNavigates.toggle()
+    })
     menu.addItem(.separator())
-    menu.addItem(
-      menuItem("Filter by Path…") { [weak self] in
-        guard let self,
-          let values = self.prompt(
-            "Paths Filter", fields: [("Repository-relative path", self.filter.path ?? "")])
-        else { return }
-        self.filter.path = values[0].isEmpty ? nil : values[0]
-        self.refresh(logOnly: true)
-      })
-    let first = menuItem("First Parent Only") { [weak self] in
-      self?.filter.firstParent.toggle()
-      self?.refresh(logOnly: true)
-    }
-    first.state = filter.firstParent ? .on : .off
-    menu.addItem(first)
-    menu.addItem(
-      menuItem("Clear All Filters") { [weak self] in
-        guard let self else { return }
-        self.filter = LogFilter()
-        self.logSearch.stringValue = ""
-        self.datePopup.selectItem(at: 0)
-        self.regexButton.contentTintColor = Theme.text
-        self.caseButton.contentTintColor = Theme.text
-        self.refresh(logOnly: true)
-      })
-    menu.addItem(.separator())
-    let group = menuItem("Group Branches by Prefix") { [weak self] in
+    menu.addItem(option("Group by Directory", checked: groupBranches) { [weak self] in
       self?.groupBranches.toggle()
       self?.rebuildBranches()
-    }
-    group.state = groupBranches ? .on : .off
-    menu.addItem(group)
-    let tags = menuItem("Show Tags") { [weak self] in
+    })
+    menu.addItem(option("Show Tags", checked: showTags) { [weak self] in
       self?.showTags.toggle()
       self?.rebuildBranches()
+    })
+    menu.addItem(option("Show Favorite Branches Only", checked: favoriteOnly) { [weak self] in
+      self?.favoriteOnly.toggle()
+      self?.rebuildBranches()
+    })
+    popup(menu, anchor: anchor)
+  }
+  func toggleFavorite(_ branch: Branch) {
+    var refs = favoriteRefs
+    if refs.contains(branch.fullRef) { refs.remove(branch.fullRef) }
+    else { refs.insert(branch.fullRef) }
+    favoriteRefs = refs
+    rebuildBranches()
+  }
+  @objc func branchSingleClick() {
+    guard let node = branchOutline.item(atRow: branchOutline.clickedRow) as? BranchNode,
+      node.branch != nil || node.title == "HEAD (Current Branch)" else { return }
+    let ref = node.branch?.fullRef ?? "HEAD"
+    if branchClickUpdatesFilter {
+      filter.branch = ref
+      refresh(logOnly: true)
     }
-    tags.state = showTags ? .on : .off
-    menu.addItem(tags)
-    menu.addItem(
-      menuItem(branchHidden ? "Show Git Branches" : "Hide Git Branches") { [weak self] in
-        self?.toggleBranches()
-      })
-    menu.addItem(
-      menuItem("Load More History (10,000)") { [weak self] in
-        self?.filter.limit = 10000
-        self?.refresh()
-      })
-    popup(menu)
+    if branchClickNavigates {
+      readHistory("Finding branch head", work: { try $0.commit(at: ref) }) { [weak self] in
+        self?.revealHistoryCommit($0)
+      }
+    }
+  }
+  func filterMenu(anchor: NSView? = nil) {
+    let menu = NSMenu()
+    menu.addItem(menuItem("Filter by Path…") { [weak self] in
+      guard let self, let values = self.prompt("Paths Filter",
+        fields: [("Repository-relative path", self.filter.path ?? "")]) else { return }
+      self.filter.path = values[0].isEmpty ? nil : values[0]
+      self.refresh(logOnly: true)
+    })
+    menu.addItem(option("First Parent Only", checked: filter.firstParent) { [weak self] in
+      self?.filter.firstParent.toggle()
+      self?.refresh(logOnly: true)
+    })
+    menu.addItem(menuItem("Clear All Filters") { [weak self] in
+      guard let self else { return }
+      self.debounce?.cancel()
+      self.filter = LogFilter()
+      self.logSearch.stringValue = ""
+      self.datePopup.selectItem(at: 0)
+      self.regexButton.contentTintColor = Theme.text
+      self.caseButton.contentTintColor = Theme.text
+      self.refresh(logOnly: true)
+    })
+    menu.addItem(.separator())
+    menu.addItem(menuItem(branchHidden ? "Show Git Branches" : "Hide Git Branches") { [weak self] in
+      self?.toggleBranches()
+    })
+    menu.addItem(menuItem("Load More History (10,000)") { [weak self] in
+      self?.filter.limit = 10000
+      self?.refresh()
+    })
+    popup(menu, anchor: anchor)
   }
   func focusSearch() {
     setMode("Log")

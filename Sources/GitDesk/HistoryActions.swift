@@ -44,6 +44,8 @@ extension RepositoryController {
           UserDefaults.standard.set(Array(history.prefix(20)), forKey: "commitMessages")
         }
         self.commitMessage.string = commit.fullMessage
+        self.amendDraft = nil
+        self.amendLoadToken += 1
         self.amend.state = .off
         self.selectedPaths = Set(files.map(\.path))
         self.setMode("Commit")

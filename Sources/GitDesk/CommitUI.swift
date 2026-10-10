@@ -10,10 +10,16 @@ final class CommitChangesTable: MenuTable {
       toggleSelection?()
       return
     }
+    if event.modifierFlags.intersection([.command, .control, .option, .shift]) == .control,
+      event.charactersIgnoringModifiers == "p" || event.charactersIgnoringModifiers == "m" {
+      toggleGrouping?(event.charactersIgnoringModifiers == "p")
+      return
+    }
     if event.keyCode == 123 || event.keyCode == 124,
       changeExpansion?(event.keyCode == 124) == true { return }
     super.keyDown(with: event)
   }
+  var toggleGrouping: ((Bool) -> Void)?
 }
 
 final class CommitCheckbox: NSButton {
@@ -66,17 +72,24 @@ extension RepositoryController {
     changesTable.menuProvider = { [weak self] in self?.fileContextMenu(working: true) ?? NSMenu() }
     changesTable.toggleSelection = { [weak self] in self?.toggleWorkingSelection() }
     changesTable.changeExpansion = { [weak self] expanded in self?.expandWorkingSelection(expanded) ?? false }
+    changesTable.toggleGrouping = { [weak self] directory in
+      guard let self else { return }
+      if directory { self.groupCommitDirectories.toggle() } else { self.groupCommitModules.toggle() }
+      self.rebuildWorkingRows()
+    }
     commitRollbackButton = ActionButton(symbol: "arrow.uturn.backward", tooltip: "Rollback…", size: 24) {
       [weak self] in self?.rollback()
     }
     commitDiffButton = ActionButton(symbol: "arrow.left.arrow.right", tooltip: "Show Diff", size: 24) {
       [weak self] in self?.showWorkingDiff()
     }
+    let viewOptions = ActionButton(symbol: "eye", tooltip: "View Options", size: 24) {}
+    viewOptions.handler = { [weak self, weak viewOptions] in self?.commitViewOptions(anchor: viewOptions) }
     let toolbar = row([
       ActionButton(symbol: "arrow.clockwise", tooltip: "Refresh", size: 24) { [weak self] in self?.refresh() },
       commitRollbackButton, commitDiffButton,
       ActionButton(symbol: "archivebox", tooltip: "Stash Changes…", size: 24) { [weak self] in self?.stashChanges() },
-      ActionButton(symbol: "eye", tooltip: "View Options", size: 24) { [weak self] in self?.commitViewOptions() },
+      viewOptions,
       Surface(Theme.line),
       ActionButton(symbol: "arrow.up.left.and.arrow.down.right", tooltip: "Expand All", size: 24) { [weak self] in
         self?.collapsedChanges.removeAll()
@@ -84,9 +97,7 @@ extension RepositoryController {
       },
       ActionButton(symbol: "arrow.down.right.and.arrow.up.left", tooltip: "Collapse All", size: 24) { [weak self] in
         guard let self else { return }
-        self.collapsedChanges = Set(self.workingRows.compactMap {
-          if case .group(let name, _) = $0 { return name }; return nil
-        })
+        self.collapsedChanges.formUnion(self.workingRows.filter(\.isGroup).map(\.id))
         self.rebuildWorkingRows()
       }, NSView(),
     ], spacing: 2)
@@ -213,22 +224,29 @@ extension RepositoryController {
     let cell = NSTableCellView()
     var views: [NSView] = []
     let leading = NSView()
-    leading.widthAnchor.constraint(equalToConstant: item.isGroup ? 0 : 36).isActive = true
+    leading.widthAnchor.constraint(equalToConstant: CGFloat(item.depth) * 18 + (item.isGroup ? 0 : 18)).isActive = true
     views.append(leading)
-    if case .group(let name, let files) = item {
-      if !files.isEmpty {
-        let arrow = ActionButton(symbol: collapsedChanges.contains(name) ? "chevron.right" : "chevron.down",
-          tooltip: "Expand / Collapse " + name, size: 14) { [weak self] in self?.toggleWorkingGroup(name) }
+    if item.isGroup {
+      if item.count > 0 {
+        let arrow = ActionButton(symbol: collapsedChanges.contains(item.id) ? "chevron.right" : "chevron.down",
+          tooltip: "Expand / Collapse " + item.title, size: 14) { [weak self] in self?.toggleWorkingGroup(item.id) }
         views.append(arrow)
-        views.append(workingCheckbox(files: files, name: name, index: index))
+        if !item.files.isEmpty { views.append(workingCheckbox(files: item.files, name: item.title, index: index)) }
       } else {
         let indent = NSView()
         indent.widthAnchor.constraint(equalToConstant: 16).isActive = true
         views.append(indent)
       }
-      views.append(label(name, bold: name == "Changes"))
-      if !files.isEmpty { views.append(label("\(files.count) files", color: Theme.muted, size: 12)) }
-    } else if case .file(let file) = item {
+      if item.kind == .module || item.kind == .directory {
+        let icon = NSImageView(image: NSImage(systemSymbolName: item.kind == .module ? "shippingbox" : "folder",
+          accessibilityDescription: item.kind == .module ? "Module" : "Directory") ?? NSImage())
+        icon.contentTintColor = Theme.muted
+        icon.widthAnchor.constraint(equalToConstant: 16).isActive = true
+        views.append(icon)
+      }
+      views.append(label(item.title, bold: item.title == "Changes"))
+      if item.count > 0 { views.append(label("\(item.count) " + (item.count == 1 ? "file" : "files"), color: Theme.muted, size: 12)) }
+    } else if let file = item.file {
       views.append(workingCheckbox(files: [file], name: file.path + " in commit", index: index))
       let icon = NSImageView()
       let filename = (file.path as NSString).lastPathComponent
@@ -242,17 +260,19 @@ extension RepositoryController {
       icon.widthAnchor.constraint(equalToConstant: 16).isActive = true
       icon.heightAnchor.constraint(equalToConstant: 16).isActive = true
       views.append(icon)
-      let name = label(filename, color: color)
+      let name = label(item.title, color: color)
       name.toolTip = file.oldPath.map { "\($0) → \(file.path)" } ?? file.path
       name.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
       views.append(name)
-      let directory = (file.path as NSString).deletingLastPathComponent
-      if showCommitDirectories, !directory.isEmpty {
-        let path = label(directory, color: Theme.muted, size: 12)
-        path.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        views.append(path)
-      }
-      if showCommitStatuses { views.append(label(file.isStaged ? "Staged" : file.status, color: Theme.muted, size: 11)) }
+    } else if item.kind == .ignored {
+      let icon = NSImageView(image: NSImage(systemSymbolName: item.path?.hasSuffix("/") == true ? "folder" : "doc",
+        accessibilityDescription: "Ignored") ?? NSImage())
+      icon.contentTintColor = Theme.muted
+      icon.widthAnchor.constraint(equalToConstant: 16).isActive = true
+      views.append(icon)
+      let name = label(item.title, color: Theme.muted)
+      name.toolTip = item.path
+      views.append(name)
     }
     views.append(NSView())
     let content = row(views, spacing: 4)
@@ -288,10 +308,11 @@ extension RepositoryController {
   }
   func expandWorkingSelection(_ expanded: Bool) -> Bool {
     guard workingRows.indices.contains(changesTable.selectedRow),
-      case .group(let name, _) = workingRows[changesTable.selectedRow] else { return false }
+      workingRows[changesTable.selectedRow].isGroup else { return false }
+    let name = workingRows[changesTable.selectedRow].id
     if expanded { collapsedChanges.remove(name) } else { collapsedChanges.insert(name) }
     rebuildWorkingRows()
-    if let index = workingRows.firstIndex(where: { if case .group(let candidate, _) = $0 { return candidate == name }; return false }) {
+    if let index = workingRows.firstIndex(where: { $0.id == name }) {
       changesTable.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
     }
     return true
@@ -313,31 +334,37 @@ extension RepositoryController {
     })
     popup(menu)
   }
-  func commitViewOptions() {
+  func commitViewOptions(anchor: NSView? = nil) {
     let menu = NSMenu()
-    let directory = menuItem("Show Directory Names") { [weak self] in
-      self?.showCommitDirectories.toggle()
-      self?.reloadWorkingCells()
+    menu.addItem(NSMenuItem.sectionHeader(title: "Group By"))
+    let directory = menuItem("Directory") { [weak self] in
+      self?.groupCommitDirectories.toggle()
+      self?.rebuildWorkingRows()
     }
-    directory.state = showCommitDirectories ? .on : .off
+    directory.state = groupCommitDirectories ? .on : .off
+    directory.keyEquivalent = "p"
+    directory.keyEquivalentModifierMask = .control
     menu.addItem(directory)
-    let status = menuItem("Show File Status") { [weak self] in
-      self?.showCommitStatuses.toggle()
-      self?.reloadWorkingCells()
+    let module = menuItem("Module") { [weak self] in
+      self?.groupCommitModules.toggle()
+      self?.rebuildWorkingRows()
     }
-    status.state = showCommitStatuses ? .on : .off
-    menu.addItem(status)
+    module.state = groupCommitModules ? .on : .off
+    module.keyEquivalent = "m"
+    module.keyEquivalentModifierMask = .control
+    menu.addItem(module)
     menu.addItem(.separator())
-    menu.addItem(menuItem("Select All Files") { [weak self] in
+    menu.addItem(NSMenuItem.sectionHeader(title: "Show"))
+    let ignored = menuItem("Ignored Files") { [weak self] in
       guard let self else { return }
-      self.selectedPaths = Set(self.snapshot?.changes.map(\.path) ?? [])
-      self.reloadWorkingCells()
-    })
-    menu.addItem(menuItem("Deselect All Files") { [weak self] in
-      self?.selectedPaths.removeAll()
-      self?.reloadWorkingCells()
-    })
-    popup(menu)
+      self.showIgnoredFiles.toggle()
+      if !self.showIgnoredFiles { self.ignoredPaths = [] }
+      self.rebuildWorkingRows()
+      self.refresh()
+    }
+    ignored.state = showIgnoredFiles ? .on : .off
+    menu.addItem(ignored)
+    popup(menu, anchor: anchor)
   }
   func showCommitOptions() {
     let signOff = NSButton(checkboxWithTitle: "Sign-off commit", target: nil, action: nil)
@@ -349,8 +376,4 @@ extension RepositoryController {
     commitAuthor = values[0].trimmingCharacters(in: .whitespacesAndNewlines)
     commitSignOff = signOff.state == .on
   }
-}
-
-private extension WorkingRow {
-  var isGroup: Bool { if case .group = self { return true }; return false }
 }

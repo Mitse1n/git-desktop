@@ -68,6 +68,7 @@ let cases: [(String, (GitRepositoryTests) throws -> Void)] = [
   ("Automatic squash, drop all and stale session", { try $0.testAutomaticSquashDropAllAndStaleSession() }),
   ("History plan validation and navigation", { try $0.testHistoryPlanValidationAndNavigation() }),
   ("Unborn repository and initial commit", { try $0.testUnbornRepositoryAndInitialCommit() }),
+  ("Ignored files stay read-only and collapsed", { try $0.testIgnoredFilesAreReadOnlyAndCollapsed() }),
   ("Selected commit preserves staging", { try $0.testSelectedCommitPreservesUnrelatedStaging() }),
   ("Commit author and sign-off", { try $0.testCommitAuthorAndSignOff() }),
   ("Failed commit preserves index", { try $0.testFailedCommitPreservesIndexAndWorkingTree() }),
