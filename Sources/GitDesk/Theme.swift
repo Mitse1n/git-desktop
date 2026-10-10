@@ -2,23 +2,41 @@ import AppKit
 import GitDeskCore
 
 enum Theme {
-  static let background = NSColor(hex: 0x191A1C)
-  static let chrome = NSColor(hex: 0x25262A)
-  static let line = NSColor(hex: 0x2D2E32)
-  static let text = NSColor(hex: 0xBCBEC4)
-  static let muted = NSColor(hex: 0x777A80)
-  static let selection = NSColor(hex: 0x22273D)
-  static let hover = NSColor.white.withAlphaComponent(0.07)
-  static let blue = NSColor(hex: 0x6B9BFA)
-  static let green = NSColor(hex: 0x79A66A)
-  static let red = NSColor(hex: 0xC77C79)
-  static let yellow = NSColor(hex: 0xE9C66A)
-  static let graph = [
-    NSColor(hex: 0x3D8E9C), NSColor(hex: 0x6546A3), NSColor(hex: 0xC89056), NSColor(hex: 0x77A66A),
-    NSColor(hex: 0x9C3D86), NSColor(hex: 0x669DF6),
-  ]
+  static var current = AppTheme.saved()
+  static let background = dynamic(.background)
+  static let chrome = dynamic(.chrome)
+  static let line = dynamic(.line)
+  static let border = dynamic(.border)
+  static let text = dynamic(.text)
+  static let muted = dynamic(.muted)
+  static let selection = dynamic(.selection)
+  static let activeSelection = dynamic(.activeSelection)
+  static let inactiveSelection = dynamic(.inactiveSelection)
+  static let hover = dynamic(.hover)
+  static let blue = dynamic(.blue)
+  static let green = dynamic(.green)
+  static let red = dynamic(.red)
+  static let yellow = dynamic(.yellow)
+  static let accent = dynamic(.accent)
+  static let pressedAccent = dynamic(.pressedAccent)
+  static let diffRemoved = dynamic(.diffRemoved)
+  static let diffAdded = dynamic(.diffAdded)
+  static let diffModified = dynamic(.diffModified)
+  static let diffGap = dynamic(.diffGap)
+  static let keyword = dynamic(.keyword)
+  static let string = dynamic(.string)
+  static let heading = dynamic(.heading)
+  static let graph: [NSColor] = [
+    (0x3D8E9C, 0x167D8D), (0xA571E6, 0x8150BE), (0xC89056, 0xA36B24),
+    (0x77A66A, 0x337A3A), (0xC77DBB, 0xA33B8B), (0x669DF6, 0x315FBD),
+  ].enumerated().map { index, pair in
+    NSColor(name: NSColor.Name("GitDesk.graph.\(index)")) { _ in
+      NSColor(hex: current.isDark ? pair.0 : pair.1)
+    }
+  }
   static let font = NSFont.systemFont(ofSize: 13)
-  static let branchIcon = NSImage(size: NSSize(width: 16, height: 16), flipped: false) { _ in
+  static var branchIcon: NSImage {
+    let image = NSImage(size: NSSize(width: 16, height: 16), flipped: false) { _ in
     text.setStroke()
     let path = NSBezierPath()
     path.lineWidth = 1.1
@@ -31,6 +49,9 @@ enum Theme {
       NSBezierPath(ovalIn: NSRect(x: point.x - 2, y: point.y - 2, width: 4, height: 4)).stroke()
     }
     return true
+    }
+    image.isTemplate = true
+    return image
   }
 }
 extension NSColor {
@@ -40,13 +61,32 @@ extension NSColor {
       blue: CGFloat(hex & 255) / 255, alpha: 1)
   }
 }
-final class Surface: NSView {
-  init(_ color: NSColor = Theme.background) {
+protocol ThemeUpdating { func refreshTheme() }
+
+final class Surface: NSView, ThemeUpdating {
+  var fillColor: NSColor { didSet { refreshTheme() } }
+  var borderColor: NSColor? { didSet { refreshTheme() } }
+  var islandPanel = false { didSet { refreshTheme() } }
+  init(_ color: NSColor = Theme.background, islandPanel: Bool = false) {
+    fillColor = color
+    self.islandPanel = islandPanel
     super.init(frame: .zero)
     wantsLayer = true
-    layer?.backgroundColor = color.cgColor
+    refreshTheme()
   }
   required init?(coder: NSCoder) { fatalError() }
+  override func viewDidChangeEffectiveAppearance() {
+    super.viewDidChangeEffectiveAppearance()
+    refreshTheme()
+  }
+  func refreshTheme() {
+    layer?.backgroundColor = fillColor.cgColor
+    if let borderColor { layer?.borderColor = borderColor.cgColor }
+    if islandPanel {
+      layer?.cornerRadius = Theme.current.isIsland ? 10 : 0
+      layer?.masksToBounds = true
+    }
+  }
 }
 final class GitSplitView: NSSplitView {
   override var dividerColor: NSColor { Theme.line }
@@ -161,7 +201,7 @@ final class HeaderMenuButton: NSButton {
     let scale = window?.backingScaleFactor ?? 1
     let center = (bounds.midY * scale).rounded() / scale
     if isHighlighted {
-      NSColor.white.withAlphaComponent(0.08).setFill()
+      Theme.hover.setFill()
       NSBezierPath(roundedRect: bounds, xRadius: 5, yRadius: 5).fill()
     }
     if kind == .repository {
@@ -212,9 +252,9 @@ final class ActionButton: NSButton {
   override func draw(_ dirtyRect: NSRect) {
     if let commitStyle {
       let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 4, yRadius: 4)
-      (commitStyle == .primary ? NSColor(hex: isHighlighted ? 0x315FBC : 0x3574F0) : Theme.background).setFill()
+      (commitStyle == .primary ? (isHighlighted ? Theme.pressedAccent : Theme.accent) : Theme.background).setFill()
       path.fill()
-      if commitStyle == .secondary { NSColor(hex: 0x43454A).setStroke(); path.lineWidth = 1; path.stroke() }
+      if commitStyle == .secondary { Theme.border.setStroke(); path.lineWidth = 1; path.stroke() }
       let size = (title as NSString).size(withAttributes: [.font: Theme.font])
       (title as NSString).draw(at: NSPoint(x: bounds.midX - size.width / 2, y: bounds.midY - size.height / 2),
         withAttributes: [.font: Theme.font, .foregroundColor: commitStyle == .primary ? NSColor.white : Theme.text])
@@ -225,7 +265,7 @@ final class ActionButton: NSButton {
       let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 1.5), xRadius: 4, yRadius: 4)
       Theme.chrome.setFill()
       path.fill()
-      NSColor(hex: 0x41434A).setStroke()
+      Theme.border.setStroke()
       path.lineWidth = 1
       path.stroke()
     }
@@ -503,7 +543,7 @@ final class LogTable: MenuTable {
     cell.toolTip = nil
     content.addSubview(expanded, positioned: .above, relativeTo: nil)
   }
-  private func dismissTextExpansion() {
+  func dismissTextExpansion() {
     expansionSource?.toolTip = expansionToolTip
     expansionToolTip = nil
     expansionView?.removeFromSuperview()
@@ -662,7 +702,7 @@ final class FilterPopup: NSPopUpButton {
     path.stroke()
   }
 }
-final class MenuOutline: NSOutlineView {
+class MenuOutline: NSOutlineView {
   var menuProvider: (() -> NSMenu)?
   var toggleGrouping: ((Bool) -> Void)?
   override func keyDown(with event: NSEvent) {
@@ -684,6 +724,7 @@ final class SelectionRow: NSTableRowView {
   var usesInactiveColor = true
   var cornerRadius: CGFloat = 0
   var backgroundTint: NSColor?
+  var hoverColor = Theme.hover
   var isHovered = false { didSet { if oldValue != isHovered { needsDisplay = true } } }
   override func drawBackground(in dirtyRect: NSRect) {
     if let backgroundTint {
@@ -691,12 +732,12 @@ final class SelectionRow: NSTableRowView {
       bounds.fill()
     } else { super.drawBackground(in: dirtyRect) }
     if isHovered && !isSelected {
-      Theme.hover.setFill()
-      NSBezierPath(roundedRect: bounds.insetBy(dx: 4, dy: 0), xRadius: 4, yRadius: 4).fill()
+      hoverColor.setFill()
+      NSBezierPath(roundedRect: visibleRect.insetBy(dx: 4, dy: 0), xRadius: 4, yRadius: 4).fill()
     }
   }
   override func drawSelection(in dirtyRect: NSRect) {
-    (isEmphasized || !usesInactiveColor ? NSColor(hex: 0x2E436E) : NSColor(hex: 0x33353A)).setFill()
+    (isEmphasized || !usesInactiveColor ? Theme.activeSelection : Theme.inactiveSelection).setFill()
     NSBezierPath(roundedRect: bounds, xRadius: cornerRadius, yRadius: cornerRadius).fill()
   }
 }
@@ -716,8 +757,6 @@ func menuItem(_ title: String, enabled: Bool = true, handler: @escaping () -> Vo
 final class GraphCell: NSView {
   var graph: GraphRow? { didSet { needsDisplay = true } }
   var isHead = false
-  var primaryColor: NSColor?
-  var outgoingColor: NSColor?
   override func draw(_ dirtyRect: NSRect) {
     guard let graph else { return }
     let h = bounds.height
@@ -728,13 +767,11 @@ final class GraphCell: NSView {
       path.lineWidth = 1.6
       path.move(to: NSPoint(x: x(segment.fromLane), y: h * segment.fromY))
       path.line(to: NSPoint(x: x(segment.toLane), y: h * segment.toY))
-      let color = segment.color == graph.color
-        ? (segment.toY == 0 ? outgoingColor : nil) ?? primaryColor ?? Theme.graph[segment.color % Theme.graph.count]
-        : Theme.graph[segment.color % Theme.graph.count]
+      let color = Theme.graph[segment.color % Theme.graph.count]
       color.setStroke()
       path.stroke()
     }
-    let color = primaryColor ?? Theme.graph[graph.color % Theme.graph.count]
+    let color = Theme.graph[graph.color % Theme.graph.count]
     color.setFill()
     NSBezierPath(ovalIn: NSRect(x: x(Double(graph.lane)) - 4, y: middle - 4, width: 8, height: 8)).fill()
     if isHead {

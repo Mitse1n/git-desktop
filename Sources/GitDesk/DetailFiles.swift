@@ -4,12 +4,14 @@ import GitDeskCore
 final class FileNode: NSObject {
   let id: String
   let title: String
+  let count: Int
   let kind: WorkingRow.Kind
   var file: FileChange?
   var children: [FileNode] = []
   init(_ row: WorkingRow) {
     id = row.id
     title = row.title
+    count = row.count
     kind = row.kind
     file = row.file
   }

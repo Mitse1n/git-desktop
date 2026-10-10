@@ -316,9 +316,9 @@ final class DiffViewController: NSViewController, NSTableViewDataSource, NSTable
         ? line.left.map(String.init) ?? ""
         : id == "rn" ? line.right.map(String.init) ?? "" : line.text
       if line.kind == .removed {
-        background = NSColor(hex: 0x422D30)
+        background = Theme.diffRemoved
       } else if line.kind == .added {
-        background = NSColor(hex: 0x2D4435)
+        background = Theme.diffAdded
       }
     } else {
       guard let rows = diff?.rows, rowIndex < rows.count else { return nil }
@@ -333,18 +333,18 @@ final class DiffViewController: NSViewController, NSTableViewDataSource, NSTable
         if id == "left" || id == "ln" {
           background =
             line.left == nil
-            ? NSColor(hex: 0x23262B)
-            : line.kind == .modified ? NSColor(hex: 0x2D3E52) : NSColor(hex: 0x422D30)
+            ? Theme.diffGap
+            : line.kind == .modified ? Theme.diffModified : Theme.diffRemoved
         } else {
           background =
             line.right == nil
-            ? NSColor(hex: 0x23262B)
-            : line.kind == .modified ? NSColor(hex: 0x2D3E52) : NSColor(hex: 0x2D4435)
+            ? Theme.diffGap
+            : line.kind == .modified ? Theme.diffModified : Theme.diffAdded
         }
       }
     }
     if id == "ln" || id == "rn" { color = Theme.muted }
-    container.layer?.backgroundColor = background.cgColor
+    container.fillColor = background
     let field = label(text, color: color, size: 12)
     field.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
     field.isSelectable = true
@@ -357,8 +357,8 @@ final class DiffViewController: NSViewController, NSTableViewDataSource, NSTable
       let patterns: [(String, NSColor)] = [
         (
           "\\b(import|struct|class|enum|func|let|var|public|private|return|if|else|guard|throw|try|case|switch|nil|true|false|self)\\b",
-          NSColor(hex: 0xCF8E6D)
-        ), ("\"[^\"]*\"", NSColor(hex: 0x6AAB73)), ("//.*$", Theme.muted),
+          Theme.keyword
+        ), ("\"[^\"]*\"", Theme.string), ("//.*$", Theme.muted),
       ]
       if titleLabel.stringValue.hasSuffix(".swift") || titleLabel.stringValue.hasSuffix(".java") {
         for (pattern, color) in patterns {
@@ -372,7 +372,7 @@ final class DiffViewController: NSViewController, NSTableViewDataSource, NSTable
         && titleLabel.stringValue.hasSuffix(".md")
       {
         styled.addAttribute(
-          .foregroundColor, value: NSColor(hex: 0xC77DBB),
+          .foregroundColor, value: Theme.heading,
           range: NSRange(location: 0, length: styled.length))
       }
       field.attributedStringValue = styled
@@ -426,7 +426,7 @@ final class DiffWindowController: NSWindowController, NSWindowDelegate {
       contentRect: NSRect(x: 0, y: 0, width: 1120, height: 700),
       styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false
     )
-    window.appearance = NSAppearance(named: .darkAqua)
+    window.appearance = nil
     window.minSize = NSSize(width: 750, height: 420)
     super.init(window: window)
     window.contentViewController = controller
@@ -466,7 +466,7 @@ final class ConflictWindowController: NSWindowController, NSWindowDelegate {
       contentRect: NSRect(x: 0, y: 0, width: 1100, height: 720),
       styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
     window.title = "Resolve Conflict: " + file.path
-    window.appearance = NSAppearance(named: .darkAqua)
+    window.appearance = nil
     window.isReleasedWhenClosed = false
     super.init(window: window)
     window.delegate = self

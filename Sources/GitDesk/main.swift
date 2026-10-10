@@ -4,6 +4,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private var repositoryWindows: [RepositoryWindowController] = []
   private weak var activeRepositoryWindow: RepositoryWindowController?
   private var pendingOpenURL: URL?
+  private var appearanceSettings: AppearanceWindowController?
   var controller: RepositoryController? {
     (activeRepositoryWindow ?? repositoryWindows.last)?.repositoryController
   }
@@ -12,7 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       let icon = NSImage(contentsOf: iconURL) {
       NSApp.applicationIconImage = icon
     }
-    NSApp.appearance = NSAppearance(named: .darkAqua)
+    Theme.apply(Theme.current, persist: false)
     makeMenu()
     newWindow()
     let args = CommandLine.arguments.dropFirst()
@@ -25,6 +26,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       FileManager.default.fileExists(atPath: path) {
       controller?.open(URL(fileURLWithPath: path))
     }
+  }
+  func showAppearanceSettings() {
+    if appearanceSettings == nil { appearanceSettings = AppearanceWindowController() }
+    appearanceSettings?.present()
   }
   func newWindow() {
     let context = RepositoryWindowController()
@@ -66,6 +71,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
           "A native Swift + AppKit Git client inspired by IntelliJ IDEA.\nVersion 0.1.0"
         alert.runModal()
       })
+    addAction(app, "Settings…", key: ",") { [weak self] in self?.showAppearanceSettings() }
     app.addItem(.separator())
     app.addItem(
       withTitle: "Hide GitDesk", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
@@ -116,6 +122,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     addAction(view, "Show Diff", key: "d") { [weak self] in self?.controller?.showDiff() }
     addAction(view, "Show / Hide Branches") { [weak self] in self?.controller?.toggleBranches() }
+    view.addItem(.separator())
+    let themeItem = NSMenuItem(title: "Theme", action: nil, keyEquivalent: "")
+    themeItem.submenu = ThemeMenu()
+    view.addItem(themeItem)
     add("View", menu: view, to: main)
     let windows = NSMenu()
     windows.addItem(

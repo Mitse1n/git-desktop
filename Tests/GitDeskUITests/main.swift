@@ -73,6 +73,40 @@ print("Log text expansion: subject/author/date, wrapping, window edges, height t
 
 // Exercise the actual table event handlers; keep this window off screen.
 _ = NSApplication.shared
+do {
+  let commits = [
+    Commit(hash: "main", parents: ["root"], author: "T", subject: "Main"),
+    Commit(hash: "side-a", parents: ["root"], author: "T", subject: "Side A"),
+    Commit(hash: "side-b", parents: ["root"], author: "T", subject: "Side B"),
+    Commit(hash: "root", parents: [], author: "T", subject: "Root"),
+  ]
+  let rows = CommitGraph.layout(commits, heads: ["main", "side-a", "side-b"])
+  let original = Theme.current
+  defer { Theme.current = original }
+  for theme in AppTheme.allCases {
+    Theme.current = theme
+    let cell = GraphCell(frame: NSRect(x: 0, y: 0, width: 100, height: 40))
+    cell.graph = rows[1]
+    let bitmap = cell.bitmapImageRepForCachingDisplay(in: cell.bounds)!
+    cell.cacheDisplay(in: cell.bounds, to: bitmap)
+    func pixel(_ x: CGFloat, _ y: CGFloat) -> NSColor {
+      bitmap.colorAt(x: Int(x * CGFloat(bitmap.pixelsWide) / 100),
+        y: Int((40 - y) * CGFloat(bitmap.pixelsHigh) / 40))!.usingColorSpace(.sRGB)!
+    }
+    func matches(_ actual: NSColor, _ expected: NSColor) -> Bool {
+      let expected = expected.usingColorSpace(.sRGB)!
+      return actual.alphaComponent > 0.2 && abs(actual.redComponent - expected.redComponent) < 0.025
+        && abs(actual.greenComponent - expected.greenComponent) < 0.025
+        && abs(actual.blueComponent - expected.blueComponent) < 0.025
+    }
+    let branch = Theme.graph[rows[1].color % Theme.graph.count]
+    precondition(matches(pixel(31, 20), branch), "The side-branch dot uses its branch color")
+    precondition(matches(pixel(31, 10), branch), "The side-branch line matches its dot in " + theme.title)
+    precondition(matches(pixel(16, 10), Theme.graph[rows[0].color % Theme.graph.count]),
+      "A main connection passing through a side-branch row keeps its own color")
+  }
+  print("Graph rendering: branch dots/lines and passing main connections match in all four themes")
+}
 final class LogResizeDataSource: NSObject, NSTableViewDataSource {
   func numberOfRows(in tableView: NSTableView) -> Int { 20 }
   func tableView(_ tableView: NSTableView, objectValueFor tableColumn: NSTableColumn?, row: Int) -> Any? { nil }

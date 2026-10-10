@@ -78,10 +78,21 @@ public struct LogFilter: Equatable {
   public var limit = 2000
   public init() {}
 }
+// Graph ordering needs ancestry beyond the visible log limit, but not messages,
+// authors or decorations for every historical commit.
+public struct CommitAncestry: Equatable {
+  public let hash: String
+  public let parents: [String]
+  public init(hash: String, parents: [String]) {
+    self.hash = hash
+    self.parents = parents
+  }
+}
 public struct RepositorySnapshot: Equatable {
   public let branches: [Branch]
   public let commits: [Commit]
   public let history: [Commit]
+  public let graphAncestry: [CommitAncestry]
   public let changes: [FileChange]
   public let currentBranch: String
   public let remotes: [String]
@@ -89,11 +100,15 @@ public struct RepositorySnapshot: Equatable {
   public let operation: String?
   public init(
     branches: [Branch], commits: [Commit], changes: [FileChange], currentBranch: String,
-    remotes: [String], stashes: [String], operation: String?, history: [Commit]? = nil
+    remotes: [String], stashes: [String], operation: String?, history: [Commit]? = nil,
+    graphAncestry: [CommitAncestry]? = nil
   ) {
     self.branches = branches
     self.commits = commits
     self.history = history ?? commits
+    self.graphAncestry = graphAncestry ?? (history ?? commits).map {
+      CommitAncestry(hash: $0.hash, parents: $0.parents)
+    }
     self.changes = changes
     self.currentBranch = currentBranch
     self.remotes = remotes
@@ -148,9 +163,20 @@ public struct GraphRow {
 }
 public enum CommitGraph {
   public static func layout(_ commits: [Commit], ancestry: [Commit] = [], heads: [String] = []) -> [GraphRow] {
+    layout(commits, topology: ancestry.map { CommitAncestry(hash: $0.hash, parents: $0.parents) }, heads: heads)
+  }
+
+  public static func layout(_ commits: [Commit], topology: [CommitAncestry], heads: [String] = []) -> [GraphRow] {
+    guard !commits.isEmpty else { return [] }
     let visible = Set(commits.map(\.hash))
+    // A detached revision or a newly loaded old branch can lie outside the
+    // cached topology. Never leave visible commits without an ancestry rank.
+    let known = Set(topology.map(\.hash))
+    let source = topology + commits.filter { !known.contains($0.hash) }.map {
+      CommitAncestry(hash: $0.hash, parents: $0.parents)
+    }
     let parentsByHash = Dictionary(
-      (ancestry.isEmpty ? commits : ancestry).map { ($0.hash, $0.parents) },
+      source.map { ($0.hash, $0.parents) },
       uniquingKeysWith: { a, _ in a })
     func projectedParents(_ commit: Commit) -> [String] {
       var result: [String] = []
@@ -171,7 +197,6 @@ public enum CommitGraph {
     // Assign stable ancestry order from branch tips before packing visible rows.
     // A new head can then occupy the left lane instead of always being appended
     // to the right of every older branch passing through the row.
-    let source = ancestry.isEmpty ? commits : ancestry
     let sourceIndices = Dictionary(source.enumerated().map { ($0.element.hash, $0.offset) }, uniquingKeysWith: { a, _ in a })
     let orderedParents = parentsByHash.mapValues { parents in
       parents.filter { sourceIndices[$0] != nil }
@@ -235,7 +260,11 @@ public enum CommitGraph {
           for edge in connections {
             let destination = edge.to == index + 1 ? nodeLanes[index + 1] : positions[index + 1][edge]
             if let destination {
-              edges.append(GraphEdge(from: position, to: destination, color: ranks[commits[edge.to].hash] ?? 0))
+              // A branch keeps its color all the way to the common ancestor.
+              // First-parent connections belong to the child; a merge's other
+              // connections belong to the branches being merged into it.
+              let owner = parents[edge.from].first == edge.to ? edge.from : edge.to
+              edges.append(GraphEdge(from: position, to: destination, color: ranks[commits[owner].hash] ?? 0))
             }
           }
         }

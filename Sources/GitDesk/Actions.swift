@@ -269,7 +269,6 @@ extension RepositoryController {
           self.comparison = (a, b)
           self.detailFiles = files
           self.rebuildDetailFiles()
-          self.detailTitle.stringValue = "Comparison"
           self.detailsText.string = title + "\n\n\(files.count) changed files"
           self.setMode("Log")
           if !files.isEmpty { self.openDiff(files: files, index: 0, comparison: (a, b)) }
@@ -738,43 +737,11 @@ extension RepositoryController {
       self?.showDetails.toggle()
       self?.updateDetailVisibility()
     })
-    menu.addItem(option("Show Diff Preview", checked: showDetailDiff) { [weak self] in
-      self?.showDetailDiff.toggle()
-      self?.updateDetailVisibility()
-    })
     popup(menu, anchor: anchor)
   }
   func updateDetailVisibility() {
     detailTextArea?.isHidden = !showDetails
-    detailDiff?.view.isHidden = !showDetailDiff
     detailsSplit?.adjustSubviews()
-    detailFilesSplit?.adjustSubviews()
-    if showDetailDiff, let split = detailFilesSplit, split.subviews[1].frame.height < 160 {
-      split.setPosition(min(120, split.bounds.height * 0.35), ofDividerAt: 0)
-    }
-    previewDetailDiff()
-  }
-  func previewDetailDiff() {
-    guard showDetailDiff, let repository, selectedCommit != nil || comparison != nil,
-      comparison != nil || loadedDetailHash == selectedCommit?.hash,
-      let file = selectedDetailFiles.first ?? detailFiles.first else {
-      detailDiff?.clear()
-      return
-    }
-    detailDiff?.load(repository: repository, change: file,
-      commit: comparison == nil ? selectedCommit : nil, comparison: comparison)
-  }
-  func navigateDetailDiff(_ delta: Int) {
-    guard !detailFiles.isEmpty else { return }
-    let current = detailFiles.firstIndex { $0.path == detailDiff?.titleLabel.stringValue } ?? 0
-    let next = min(max(current + delta, 0), detailFiles.count - 1)
-    filesTable.expandItem(nil, expandChildren: true)
-    if let row = (0..<filesTable.numberOfRows).first(where: {
-      (filesTable.item(atRow: $0) as? FileNode)?.file?.path == detailFiles[next].path
-    }) {
-      filesTable.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
-      filesTable.scrollRowToVisible(row)
-    }
   }
   private func option(_ title: String, checked: Bool, key: String = "",
     handler: @escaping () -> Void) -> NSMenuItem {

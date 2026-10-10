@@ -318,6 +318,7 @@ final class GitRepositoryTests: TestHarness {
       repo.onCommand = nil
       XCTAssertEqual(filtered.commits, try repo.log(filter))
       XCTAssertEqual(filtered.history, original.history)
+      XCTAssertEqual(filtered.graphAncestry, original.graphAncestry)
       XCTAssertEqual(filtered.branches, original.branches)
       XCTAssertEqual(filtered.changes, original.changes)
       XCTAssertEqual(filtered.currentBranch, original.currentBranch)
@@ -335,6 +336,43 @@ final class GitRepositoryTests: TestHarness {
     search.branch = "refs/heads/missing"
     XCTAssertThrowsError(try repo.filteredSnapshot(from: original, filter: search))
     XCTAssertEqual(try repo.status(), original.changes)
+  }
+  func testOldBranchGraphBeyondLogLimit() throws {
+    try write("base", "base\n")
+    try commitAll("Base")
+    try repo.createBranch("old-side")
+    try write("side", "side\n")
+    try commitAll("Side")
+    try repo.run(["switch", "main"])
+    try repo.run(["merge", "--no-ff", "old-side", "-m", "Old merge"])
+    try repo.run(["branch", "old-release"])
+    for index in 0..<4 {
+      try write("recent", "\(index)\n")
+      try commitAll("Recent \(index)")
+    }
+    var filter = LogFilter()
+    filter.limit = 2
+    let recent = try repo.snapshot(filter: filter)
+    XCTAssertEqual(recent.history.count, 2)
+    XCTAssertEqual(recent.graphAncestry.count, 7)
+    filter.branch = "old-release"
+    filter.limit = 20
+    var commands: [String] = []
+    repo.onCommand = { command, _, _ in commands.append(command) }
+    let old = try repo.filteredSnapshot(from: recent, filter: filter)
+    repo.onCommand = nil
+    XCTAssertTrue(Set(old.commits.map(\.hash)).isDisjoint(with: recent.history.map(\.hash)))
+    XCTAssertEqual(old.graphAncestry, recent.graphAncestry)
+    XCTAssertFalse(commands.contains { $0.contains("rev-list") })
+    let heads = [try repo.resolve("main"), try repo.resolve("old-release")]
+    let rows = CommitGraph.layout(old.commits, topology: old.graphAncestry, heads: heads)
+    XCTAssertEqual(rows.map(\.lane), [0, 1, 0])
+    XCTAssertEqual(rows[0].color, rows[2].color)
+    XCTAssertNotEqual(rows[0].color, rows[1].color)
+    XCTAssertEqual(Set(rows[0].edges.map(\.color)), Set(rows.prefix(2).map(\.color)))
+    let direct = try repo.snapshot(filter: filter)
+    XCTAssertEqual(direct.graphAncestry, old.graphAncestry)
+    XCTAssertEqual(CommitGraph.layout(direct.commits, topology: direct.graphAncestry, heads: heads).map(\.lane), rows.map(\.lane))
   }
   func testRebaseWorktreeAndAnnotatedTag() throws {
     try write("base", "base")
@@ -477,6 +515,86 @@ final class DiffAndGraphTests {
     // Projecting away a side commit still meets the visible ancestor's center.
     let filtered = CommitGraph.layout([commits[0], commits[2], commits[3]], ancestry: commits)
     XCTAssertTrue(filtered[1].segments.contains { $0.fromY == 1 && $0.toLane == Double(filtered[1].lane) && $0.toY == 0.5 })
+  }
+
+  func testGraphOldNestedMergesAndIncompleteCache() {
+    // The reported origin/cloud topology. The current main tip is newer than
+    // the visible rows but determines the left-hand track at the nested merge.
+    let links: [(String, [String])] = [
+      ("m1", ["m2", "s1"]), ("s1", ["s2"]),
+      ("m2", ["m3", "s2"]), ("s2", ["s3"]),
+      ("m3", ["m4", "s3"]), ("s3", ["m4"]),
+      ("m4", ["m5", "master1"]), ("master1", ["master2", "side1"]),
+      ("side1", ["side2"]), ("m5", ["base", "master2"]),
+      ("master2", ["base", "side2"]), ("side2", ["base"]), ("base", []),
+    ]
+    let commits = links.map { Commit(hash: $0.0, parents: $0.1, author: "T", subject: "") }
+    let topology = [CommitAncestry(hash: "tip", parents: ["master1"])]
+      + links.map { CommitAncestry(hash: $0.0, parents: $0.1) }
+    let rows = CommitGraph.layout(commits, topology: topology, heads: ["tip", "m1"])
+    XCTAssertEqual(Array(rows.prefix(12).map(\.lane)), [0, 1, 0, 1, 0, 1, 0, 0, 1, 2, 0, 1])
+    XCTAssertEqual(rows[0].color, rows[6].color)
+    XCTAssertEqual(rows[7].color, rows[10].color)
+    XCTAssertNotEqual(rows[6].color, rows[7].color)
+    XCTAssertEqual(Set([rows[1].color, rows[3].color, rows[5].color]).count, 3)
+    for index in [0, 2, 4] {
+      XCTAssertTrue(rows[index].edges.contains { $0.from == 0 && $0.to == 0 && $0.color == rows[index].color })
+      XCTAssertTrue(rows[index].edges.contains { $0.to == 1 && $0.color == rows[index + 1].color })
+    }
+    // Even callers with an incomplete cache must rank all visible commits.
+    // The missing tip's context is unavailable, but simple merge tracks and
+    // distinct side colors must remain intact instead of turning into zigzags.
+    for cache in [Array(topology.prefix(1)), Array(topology.suffix(2))] {
+      let fallback = CommitGraph.layout(commits, topology: cache, heads: ["m1"])
+      XCTAssertEqual(Array(fallback.prefix(7).map(\.lane)), [0, 1, 0, 1, 0, 1, 0])
+      XCTAssertTrue([1, 3, 5].allSatisfy { fallback[$0].color != fallback[0].color })
+    }
+    // Hiding intermediate main-line commits still projects the same ancestry.
+    let filtered = CommitGraph.layout([commits[0], commits[6], commits[7], commits[10], commits[12]], topology: topology, heads: ["tip", "m1"])
+    XCTAssertEqual(filtered.map(\.color), [rows[0].color, rows[6].color, rows[7].color, rows[10].color, rows[12].color])
+    XCTAssertTrue(filtered.dropFirst().allSatisfy(\.incoming))
+  }
+
+  func testGraphBranchColorsFollowConnections() {
+    // Two independently headed branches share main's root, like the reported
+    // dependabot commits. Their connections must not inherit the root's color.
+    let commits = [
+      Commit(hash: "main", parents: ["root"], author: "T", subject: "Main"),
+      Commit(hash: "side-a", parents: ["side-a-old"], author: "T", subject: "Side A"),
+      Commit(hash: "side-b", parents: ["root"], author: "T", subject: "Side B"),
+      Commit(hash: "side-a-old", parents: ["root"], author: "T", subject: "Side A old"),
+      Commit(hash: "root", parents: [], author: "T", subject: "Root"),
+    ]
+    let heads = ["main", "side-a", "side-b"]
+    let rows = CommitGraph.layout(commits, heads: heads)
+    XCTAssertEqual(Set(rows.prefix(3).map(\.color)).count, 3)
+    XCTAssertEqual(rows[1].color, rows[3].color)
+    for origin in 0..<4 {
+      let destination = origin == 1 ? 3 : 4
+      var lane = rows[origin].lane
+      for row in origin..<destination {
+        let connection = rows[row].edges.first { $0.from == lane }
+        XCTAssertEqual(connection?.color, rows[origin].color)
+        lane = connection?.to ?? -1
+      }
+      XCTAssertEqual(lane, rows[destination].lane)
+    }
+    // Filtering out intermediate commits preserves the branch color through
+    // projected ancestry and on the terminal connection to the shared root.
+    let visible = [commits[0], commits[1], commits[2], commits[4]]
+    let filtered = CommitGraph.layout(visible, ancestry: commits, heads: heads)
+    XCTAssertEqual(filtered.map(\.color), [rows[0].color, rows[1].color, rows[2].color, rows[4].color])
+    XCTAssertEqual(Set(filtered.last!.incomingEdges.map(\.color)), Set(rows.prefix(3).map(\.color)))
+    for index in 1..<rows.count {
+      XCTAssertEqual(rows[index].incomingEdges.map(\.color), rows[index - 1].edges.map(\.color))
+    }
+    let merge = [
+      Commit(hash: "merge", parents: ["main", "side-a"], author: "T", subject: "Merge"),
+    ] + commits
+    let merged = CommitGraph.layout(merge, heads: ["merge"])
+    XCTAssertEqual(merged[0].color, merged[1].color)
+    XCTAssertEqual(Set(merged[0].edges.map(\.color)), Set([merged[1].color, merged[2].color]))
+    XCTAssertTrue(merged[2].incomingEdges.contains { $0.to == merged[2].lane && $0.color == merged[2].color })
   }
 
   func testGraphBranchOrderAndDisconnectedHeads() {

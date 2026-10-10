@@ -46,7 +46,7 @@ final class CommitCheckbox: NSButton {
       let tinted = NSImage(size: rect.size)
       tinted.lockFocus()
       image.draw(in: NSRect(origin: .zero, size: rect.size))
-      (state == .off ? NSColor(hex: 0x6F737A) : NSColor(hex: 0x3574F0)).setFill()
+      (state == .off ? Theme.muted : Theme.accent).setFill()
       NSRect(origin: .zero, size: rect.size).fill(using: .sourceAtop)
       tinted.unlockFocus()
       tinted.draw(in: rect, from: .zero, operation: .sourceOver, fraction: isEnabled ? 1 : 0.4,
@@ -157,7 +157,7 @@ extension RepositoryController {
     let messageBox = Surface()
     messageBox.layer?.cornerRadius = 3
     messageBox.layer?.borderWidth = 1
-    messageBox.layer?.borderColor = NSColor(hex: 0x43454A).cgColor
+    messageBox.borderColor = Theme.border
     messageBox.layer?.masksToBounds = true
     pin(messageScroll, to: messageBox, inset: 1)
     commitButton = ActionButton("Commit", size: 28) { [weak self] in self?.commitChanges(push: false) }
@@ -256,7 +256,7 @@ extension RepositoryController {
       icon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: file.status)
       let color = file.isConflicted || file.isUntracked ? Theme.red : file.status == "Added" ? Theme.green : Theme.blue
       icon.contentTintColor = file.isUntracked ? Theme.muted : color
-      if symbol == "chevron.left.forwardslash.chevron.right" { icon.contentTintColor = NSColor(hex: 0xC98B55) }
+      if symbol == "chevron.left.forwardslash.chevron.right" { icon.contentTintColor = Theme.keyword }
       icon.widthAnchor.constraint(equalToConstant: 16).isActive = true
       icon.heightAnchor.constraint(equalToConstant: 16).isActive = true
       views.append(icon)

@@ -24,7 +24,8 @@ func historyMessagePrompt(_ title: String, message: String) -> String? {
   return alert.runModal() == .alertFirstButtonReturn ? text.string : nil
 }
 
-final class RebaseEditor: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTextViewDelegate {
+final class RebaseEditor: NSView, ThemeUpdating, NSTableViewDataSource, NSTableViewDelegate, NSTextViewDelegate {
+  func refreshTheme() { layer?.backgroundColor = Theme.background.cgColor }
   var entries: [RebaseEntry]
   let table = NSTableView()
   let message = PlaceholderTextView()

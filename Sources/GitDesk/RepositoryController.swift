@@ -100,7 +100,6 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
   var filter = LogFilter()
   var allAuthors = Set<String>()
   var graphs: [GraphRow] = []
-  var displayGraphColors: [NSColor] = []
   var currentBranchHistory = Set<String>()
   var highlightCurrentBranch = UserDefaults.standard.object(forKey: "logHighlightCurrentBranch") as? Bool ?? true {
     didSet { UserDefaults.standard.set(highlightCurrentBranch, forKey: "logHighlightCurrentBranch") }
@@ -139,7 +138,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
   var operationControls: NSStackView!
   let operationLabel = label("Rebase paused", color: Theme.yellow, size: 12)
   let split = GitSplitView()
-  let branchOutline = MenuOutline()
+  let branchOutline = BranchOutline()
   var branchHeadButton: ActionButton?
   var branchFavoriteButton: ActionButton?
   let logTable = LogTable()
@@ -153,7 +152,6 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
   let repositoryHeader = RepositoryHeader()
   var headerControls: NSStackView!
   let fileEmptyLabel = label("Select commit to view changes", color: Theme.muted)
-  let detailTitle = label("Commit details", color: Theme.muted)
   let detailEmptyLabel = label("Commit details", color: Theme.muted)
   let detailsText = NSTextView()
   let consoleText = ConsoleTextView()
@@ -169,6 +167,8 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
   let regexButton = ActionButton(".*", tooltip: "Regex") {}
   let caseButton = ActionButton("Cc", tooltip: "Match Case") {}
   let progress = NSProgressIndicator()
+  private var themeObserver: NSObjectProtocol?
+  private var bodyEdgeConstraints: [NSLayoutConstraint] = []
   var mainBody = Surface()
   var logBody = Surface()
   var commitBody = Surface()
@@ -225,19 +225,13 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
   var groupDetailDirectories = UserDefaults.standard.object(forKey: "detailGroupDirectories") as? Bool ?? true {
     didSet { UserDefaults.standard.set(groupDetailDirectories, forKey: "detailGroupDirectories") }
   }
-  var groupDetailModules = UserDefaults.standard.bool(forKey: "detailGroupModules") {
+  var groupDetailModules = UserDefaults.standard.object(forKey: "detailGroupModules") as? Bool ?? true {
     didSet { UserDefaults.standard.set(groupDetailModules, forKey: "detailGroupModules") }
   }
   var showDetails = UserDefaults.standard.object(forKey: "detailShowDetails") as? Bool ?? true {
     didSet { UserDefaults.standard.set(showDetails, forKey: "detailShowDetails") }
   }
-  var showDetailDiff = UserDefaults.standard.bool(forKey: "detailShowDiffPreview") {
-    didSet { UserDefaults.standard.set(showDetailDiff, forKey: "detailShowDiffPreview") }
-  }
   var detailTextArea: NSView?
-  var detailFilesSplit: NSSplitView?
-  var detailDiff: DiffViewController?
-  var rebuildingDetailFiles = false
   var historyLimit = 2000
   var detailsSplit: NSSplitView?
   var initializedLayout = false
@@ -248,6 +242,9 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
   override func loadView() {
     view = Surface(Theme.chrome)
     buildUI()
+    themeObserver = NotificationCenter.default.addObserver(forName: Theme.didChange, object: nil, queue: .main) {
+      [weak self] _ in self?.updateThemeLayout()
+    }
     watcher = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
       guard let self, self.repository != nil, !self.isBusy, !self.isRefreshing, self.debounce == nil,
         self.view.window?.attachedSheet == nil, NSApp.modalWindow == nil
@@ -255,7 +252,17 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
       self.refresh(silent: true)
     }
   }
-  deinit { watcher?.invalidate() }
+  deinit {
+    watcher?.invalidate()
+    if let themeObserver { NotificationCenter.default.removeObserver(themeObserver) }
+  }
+  private func updateThemeLayout() {
+    bodyEdgeConstraints[0].constant = Theme.current.isIsland ? 10 : 0
+    bodyEdgeConstraints[1].constant = Theme.current.isIsland ? -10 : 0
+    logTable.dismissTextExpansion()
+    branchOutline.dismissTextExpansion()
+    Theme.refresh(view)
+  }
   func buildUI() {
     repoLabel.handler = { [weak self] in self?.showRecent() }
     repoLabel.toolTip = "Open or switch repository (⌘O)"
@@ -283,8 +290,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     headerControls = top
     mainBody = Surface()
     mainBody.wantsLayer = true
-    mainBody.layer?.cornerRadius = 9
-    mainBody.layer?.masksToBounds = true
+    mainBody.islandPanel = true
     mainBody.translatesAutoresizingMaskIntoConstraints = false
     view.addSubview(mainBody)
     logTab = ActionButton("Log") { [weak self] in self?.setMode("Log") }
@@ -332,14 +338,17 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     progress.isDisplayedWhenStopped = false
     status.translatesAutoresizingMaskIntoConstraints = false
     view.addSubview(status)
+    bodyEdgeConstraints = [
+      mainBody.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: Theme.current.isIsland ? 10 : 0),
+      mainBody.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: Theme.current.isIsland ? -10 : 0),
+    ]
+    NSLayoutConstraint.activate(bodyEdgeConstraints)
     NSLayoutConstraint.activate([
       header.leadingAnchor.constraint(equalTo: view.leadingAnchor),
       header.trailingAnchor.constraint(equalTo: view.trailingAnchor),
       header.topAnchor.constraint(equalTo: view.topAnchor),
       header.heightAnchor.constraint(equalToConstant: 42),
       mainBody.topAnchor.constraint(equalTo: header.bottomAnchor),
-      mainBody.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 10),
-      mainBody.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -10),
       mainBody.bottomAnchor.constraint(equalTo: status.topAnchor),
       status.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 14),
       status.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -14),
@@ -362,11 +371,20 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     branchSearch.sendsSearchStringImmediately = true
     branchSearch.focusRingType = .none
     let branchColumn = NSTableColumn(identifier: .init("branch"))
-    branchColumn.resizingMask = .autoresizingMask
+    branchColumn.resizingMask = []
+    branchColumn.maxWidth = .greatestFiniteMagnitude
     branchColumn.minWidth = 0
     branchOutline.addTableColumn(branchColumn)
     branchOutline.outlineTableColumn = branchColumn
     configureTable(branchOutline)
+    branchOutline.columnAutoresizingStyle = .noColumnAutoresizing
+    branchOutline.autoresizesOutlineColumn = false
+    branchOutline.contentWidthForItem = { [weak self] item in
+      guard let self, let node = item as? BranchNode else { return 0 }
+      let font = node.branch?.current == true ? NSFont.systemFont(ofSize: 13, weight: .semibold) : Theme.font
+      let iconWidth: CGFloat = node.branch != nil || !self.branchNodes.contains(node) ? 20 : 0
+      return ceil((node.title as NSString).size(withAttributes: [.font: font]).width) + iconWidth + 12
+    }
     branchOutline.rowHeight = 25
     branchOutline.indentationPerLevel = 18
     branchOutline.dataSource = self
@@ -426,7 +444,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     let branchSearchBar = row([branchSearch])
     branchSearch.widthAnchor.constraint(equalTo: branchSearchBar.widthAnchor).isActive = true
     let branchScroll = scrollView(branchOutline)
-    branchScroll.hasHorizontalScroller = false
+    branchScroll.hasHorizontalScroller = true
     let branchArea = Surface()
     branchScroll.translatesAutoresizingMaskIntoConstraints = false
     branchArea.addSubview(branchScroll)
@@ -464,7 +482,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     caseButton.widthAnchor.constraint(equalToConstant: 20).isActive = true
     let searchBox = Surface()
     searchBox.layer?.borderWidth = 1
-    searchBox.layer?.borderColor = Theme.line.cgColor
+    searchBox.borderColor = Theme.border
     searchBox.layer?.cornerRadius = 3
     pin(row([logSearch, regexButton, caseButton], spacing: 1), to: searchBox)
     searchBox.heightAnchor.constraint(equalToConstant: 30).isActive = true
@@ -599,37 +617,26 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
       fileEmptyLabel.centerXAnchor.constraint(equalTo: filesArea.centerXAnchor),
       fileEmptyLabel.centerYAnchor.constraint(equalTo: filesArea.centerYAnchor),
     ])
-    let filesAndDiff = GitSplitView()
-    filesAndDiff.isVertical = false
-    filesAndDiff.dividerStyle = .thin
-    filesAndDiff.addArrangedSubview(makePanel(fileBar, body: filesArea, height: 34))
-    let preview = DiffViewController()
-    preview.compact = true
-    preview.nextFile = { [weak self] in self?.navigateDetailDiff(1) }
-    preview.previousFile = { [weak self] in self?.navigateDetailDiff(-1) }
-    detailDiff = preview
-    filesAndDiff.addArrangedSubview(preview.view)
-    detailFilesSplit = filesAndDiff
-    right.addArrangedSubview(filesAndDiff)
+    right.addArrangedSubview(makePanel(fileBar, body: filesArea, height: 34))
     detailsText.isEditable = false
     detailsText.isSelectable = true
     detailsText.drawsBackground = true
     detailsText.backgroundColor = Theme.background
     detailsText.textColor = Theme.text
     detailsText.font = Theme.font
+    detailsText.linkTextAttributes = [.foregroundColor: Theme.blue]
     detailsText.textContainerInset = NSSize(width: 15, height: 12)
     detailsText.autoresizingMask = [.width]
     detailsText.isHorizontallyResizable = false
     detailsText.textContainer?.widthTracksTextView = true
     let detailArea = Surface()
-    pin(makePanel(detailTitle, body: scrollView(detailsText), height: 33), to: detailArea)
+    pin(scrollView(detailsText), to: detailArea)
     detailEmptyLabel.translatesAutoresizingMaskIntoConstraints = false
     detailArea.addSubview(detailEmptyLabel)
     NSLayoutConstraint.activate([
       detailEmptyLabel.centerXAnchor.constraint(equalTo: detailArea.centerXAnchor),
       detailEmptyLabel.centerYAnchor.constraint(equalTo: detailArea.centerYAnchor),
     ])
-    detailTitle.isHidden = true
     detailTextArea = detailArea
     right.addArrangedSubview(detailArea)
     updateDetailVisibility()
@@ -653,9 +660,6 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     super.viewDidAppear()
     if !initializedLayout {
       detailsSplit?.setPosition((detailsSplit?.bounds.height ?? 600) * 0.64, ofDividerAt: 0)
-      if showDetailDiff, let previewSplit = detailFilesSplit {
-        previewSplit.setPosition(min(120, previewSplit.bounds.height * 0.35), ofDividerAt: 0)
-      }
       initializedLayout = true
     }
     if split.subviews.count == 3 && split.subviews[0].frame.width < 100 {
@@ -711,7 +715,6 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     let currentEpoch = epoch
     consoleText.string = ""
     inlineDiff?.clear()
-    detailDiff?.clear()
     loadedDetailHash = nil
     pendingDiffHash = nil
     selectedCommit = nil
@@ -895,14 +898,13 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
       }
       return priority($0) == priority($1) ? $0.name < $1.name : priority($0) < priority($1)
     }.map(\.hash)
-    graphs = CommitGraph.layout(data.commits, ancestry: data.history, heads: graphHeads)
+    graphs = CommitGraph.layout(data.commits, topology: data.graphAncestry, heads: graphHeads)
     logTable.graphLaneCounts = graphs.map(\.laneCount)
     logTable.graphWidth = CGFloat(min(10, CommitGraph.recommendedLaneCount(graphs))) * 15 + 8
     logTable.authorWidth = min(140, max(80, data.commits.map {
       ($0.author as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 13, weight: .semibold)]).width + 12
     }.max() ?? 80))
-    // The checked-out tip has its own color until it joins the main branch.
-    let ancestry = Dictionary(data.history.map { ($0.hash, $0) }, uniquingKeysWith: { first, _ in first })
+    let ancestry = Dictionary(data.graphAncestry.map { ($0.hash, $0) }, uniquingKeysWith: { first, _ in first })
     currentBranchHistory = []
     let head = data.branches.first(where: \.current)?.hash ?? data.history.first {
       $0.decorations.contains { $0 == "HEAD" || $0.hasPrefix("HEAD -> ") }
@@ -910,17 +912,6 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     var pending = head.map { [$0] } ?? []
     while let hash = pending.popLast() {
       if currentBranchHistory.insert(hash).inserted { pending.append(contentsOf: ancestry[hash]?.parents ?? []) }
-    }
-    var mainHistory = Set<String>()
-    var cursor = data.branches.first { $0.kind == .local && ["main", "master"].contains($0.name) }?.hash
-    while let hash = cursor, mainHistory.insert(hash).inserted { cursor = ancestry[hash]?.parents.first }
-    let historyGraphs = CommitGraph.layout(data.history, heads: graphHeads)
-    let historyColors = Dictionary(zip(data.history.map(\.hash), historyGraphs.map(\.color)), uniquingKeysWith: { first, _ in first })
-    let mainGraphColor = data.history.first { mainHistory.contains($0.hash) }.flatMap { historyColors[$0.hash] }
-    displayGraphColors = data.commits.enumerated().map { index, commit in
-      let color = historyColors[commit.hash] ?? graphs[index].color
-      if mainGraphColor == color { return mainHistory.contains(commit.hash) ? Theme.graph[0] : Theme.graph[4] }
-      return Theme.graph[color % Theme.graph.count]
     }
     logTable.fitColumns()
     rebuildingLog = true
@@ -942,8 +933,6 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
       detailFiles = []
       rebuildDetailFiles()
       detailsText.string = ""
-      detailTitle.stringValue = "Commit details"
-      detailTitle.isHidden = true
       detailEmptyLabel.isHidden = false
     }
     let branchSelection = filter.branch
@@ -1024,9 +1013,9 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     }) {
       branchOutline.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
     }
-    branchOutline.sizeLastColumnToFit()
+    branchOutline.fitContentWidth()
     if let clip = branchOutline.enclosingScrollView?.contentView {
-      clip.scroll(to: NSPoint(x: 0, y: clip.bounds.minY))
+      clip.scroll(to: NSPoint(x: clip.bounds.minX, y: clip.bounds.minY))
       branchOutline.enclosingScrollView?.reflectScrolledClipView(clip)
     }
   }
@@ -1100,10 +1089,6 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
         let cell = GraphCell()
         cell.graph = graphs[rowIndex]
         cell.isHead = commit.decorations.contains { $0 == "HEAD" || $0.hasPrefix("HEAD -> ") }
-        cell.primaryColor = displayGraphColors[rowIndex]
-        if rowIndex + 1 < graphs.count, graphs[rowIndex + 1].color == graphs[rowIndex].color {
-          cell.outgoingColor = displayGraphColors[rowIndex + 1]
-        }
         return cell
       }
       if id == "subject" {
@@ -1184,7 +1169,6 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
       ? "Select commit to view changes" : "No changed files"
     detailNodes = DetailFiles.tree(detailFiles, modules: commitModules,
       directories: groupDetailDirectories, byModule: groupDetailModules)
-    rebuildingDetailFiles = true
     filesTable.reloadData()
     func restore(_ nodes: [FileNode]) {
       for node in nodes where !node.children.isEmpty {
@@ -1202,8 +1186,6 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
       clip.scroll(to: NSPoint(x: 0, y: clip.bounds.minY))
       filesTable.enclosingScrollView?.reflectScrolledClipView(clip)
     }
-    rebuildingDetailFiles = false
-    previewDetailDiff()
   }
   var selectedDetailFiles: [FileChange] {
     filesTable.selectedRowIndexes.flatMap { (filesTable.item(atRow: $0) as? FileNode)?.files ?? [] }
@@ -1230,20 +1212,9 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
       detailFiles = []
       rebuildDetailFiles()
     }
-    detailTitle.stringValue = commit.shortHash
-    detailTitle.isHidden = false
     detailEmptyLabel.isHidden = true
-    let detailMessage =
-      commit.subject + "\n\n" + commit.body + "\n\n"
-      + "\(commit.shortHash)  \(commit.author) <\(commit.email)>\n" + commit.date.formatted()
-      + "\n\n" + commit.decorations.joined(separator: "   ") + "\n\nParents: "
-      + commit.parents.map { String($0.prefix(8)) }.joined(separator: ", ")
-    detailsText.textStorage?.setAttributedString(NSAttributedString(string: detailMessage,
-      attributes: [.font: Theme.font, .foregroundColor: Theme.text]))
-    let subjectRange = NSRange(location: 0, length: (commit.subject as NSString).length)
-    detailsText.textStorage?.addAttributes(
-      [.font: NSFont.systemFont(ofSize: 14, weight: .semibold), .foregroundColor: Theme.text],
-      range: subjectRange)
+    detailsText.textStorage?.setAttributedString(CommitDetails.text(for: commit))
+    detailsText.scrollToBeginningOfDocument(nil)
     queue.async { [weak self] in
       do {
         let files = try repo.changes(in: commit)
@@ -1266,7 +1237,6 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     }
   }
   func outlineViewSelectionDidChange(_ notification: Notification) {
-    if notification.object as? NSOutlineView === filesTable, !rebuildingDetailFiles { previewDetailDiff() }
     if notification.object as? NSOutlineView === branchOutline {
       branchHeadButton?.isEnabled = selectedBranchRevision != nil
       branchFavoriteButton?.isEnabled = selectedBranch != nil
@@ -1296,7 +1266,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
       let icon = NSImageView()
       let file = node.file
       icon.image = NSImage(
-        systemSymbolName: file == nil ? (node.kind == .module ? "shippingbox" : "folder") : "doc",
+        systemSymbolName: file == nil ? "folder" : "doc",
         accessibilityDescription: file?.status ?? "Folder")
       icon.contentTintColor =
         file?.status == "Added"
@@ -1306,12 +1276,16 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
       text.toolTip = file?.path
       icon.translatesAutoresizingMaskIntoConstraints = false
       icon.widthAnchor.constraint(equalToConstant: 14).isActive = true
-      pin(row([icon, text]), to: cell, inset: 3)
+      var contents: [NSView] = [icon, text]
+      if file == nil {
+        contents.append(label("\(node.count) " + (node.count == 1 ? "file" : "files"), color: Theme.muted))
+      }
+      pin(row(contents, spacing: 6), to: cell, inset: 3)
       return cell
     }
     guard let node = item as? BranchNode else { return nil }
-    let cell = NSTableCellView()
-    let icon = NSImageView()
+    let cell = BranchCell()
+    let icon = cell.branchIcon
     if let branch = node.branch {
       switch BranchTree.icon(for: branch, favorites: favoriteRefs) {
       case .current:
@@ -1331,7 +1305,8 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
       icon.image = NSImage(systemSymbolName: "folder", accessibilityDescription: "Folder")
     }
     let text = label(node.title, bold: node.branch?.current == true)
-    text.toolTip = node.branch.map {
+    cell.textField = text
+    cell.toolTip = node.branch.map {
       $0.name + ($0.upstream.isEmpty ? "" : " → " + $0.upstream + " " + $0.tracking)
     }
     let stack =
@@ -1344,7 +1319,12 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     return cell
   }
   func outlineView(_ outlineView: NSOutlineView, rowViewForItem item: Any) -> NSTableRowView? {
-    SelectionRow()
+    let row = SelectionRow()
+    if outlineView === branchOutline {
+      row.hoverColor = Theme.inactiveSelection
+      row.isHovered = branchOutline.row(forItem: item) == branchOutline.hoveredRow
+    }
+    return row
   }
   var selectedBranch: Branch? {
     (branchOutline.item(atRow: branchOutline.selectedRow) as? BranchNode)?.branch

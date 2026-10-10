@@ -181,6 +181,15 @@ public final class GitRepository {
       return value.range(of: filter.text, options: filter.matchCase ? [] : .caseInsensitive) != nil
     }
   }
+  private func graphAncestry() throws -> [CommitAncestry] {
+    guard hasHead else { return [] }
+    return try run(["rev-list", "--topo-order", "--date-order", "--parents", "--all", "HEAD"])
+      .split(separator: "\n").compactMap { line in
+        let hashes = line.split(separator: " ")
+        guard let hash = hashes.first else { return nil }
+        return CommitAncestry(hash: String(hash), parents: hashes.dropFirst().map(String.init))
+      }
+  }
   public func snapshot(filter: LogFilter = LogFilter()) throws -> RepositorySnapshot {
     var refs = try branches()
     let branch = try run(["symbolic-ref", "--quiet", "--short", "HEAD"], allowFailure: true)
@@ -209,7 +218,7 @@ public final class GitRepository {
       changes: try status(), currentBranch: branch.isEmpty ? "Detached HEAD" : branch,
       remotes: try run(["remote"]).split(separator: "\n").map(String.init),
       stashes: try run(["stash", "list", "--format=%gd: %s"]).split(separator: "\n").map(
-        String.init), operation: operation, history: history)
+        String.init), operation: operation, history: history, graphAncestry: try graphAncestry())
   }
   // Changing a history filter does not change refs, the worktree, or stashes.
   // Keep their last snapshot until an explicit/background repository refresh.
@@ -219,7 +228,7 @@ public final class GitRepository {
     RepositorySnapshot(
       branches: snapshot.branches, commits: try log(filter), changes: snapshot.changes,
       currentBranch: snapshot.currentBranch, remotes: snapshot.remotes, stashes: snapshot.stashes,
-      operation: snapshot.operation, history: snapshot.history)
+      operation: snapshot.operation, history: snapshot.history, graphAncestry: snapshot.graphAncestry)
   }
   public static func parseNameStatus(_ data: Data) -> [FileChange] {
     let fields = data.split(separator: 0).map { String(decoding: $0, as: UTF8.self) }

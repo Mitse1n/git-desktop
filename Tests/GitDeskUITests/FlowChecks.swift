@@ -40,6 +40,8 @@ func runFlowChecks() throws {
   try commit("Current subject\n\nCurrent body")
   let head = try repo.commit(at: "HEAD")
   try repo.run(["branch", "feature/older", "HEAD~1"])
+  let longBranch = "feature/" + String(repeating: "very-long-branch-中文-", count: 10)
+  try repo.run(["branch", longBranch, "HEAD~1"])
   try write("first.txt", "ONE\ntwo\nTHREE\n")
   try write("space.txt", "value   = 1\n")
   let changes = try repo.status()
@@ -78,6 +80,12 @@ func runFlowChecks() throws {
   check(viewer.diff == nil && viewer.emptyLabel.stringValue == "Select a file to view its changes",
     "Changing options without a file preserves the empty state")
 
+  let oldPreviewPreference = UserDefaults.standard.object(forKey: "detailShowDiffPreview")
+  UserDefaults.standard.set(true, forKey: "detailShowDiffPreview")
+  defer {
+    if let oldPreviewPreference { UserDefaults.standard.set(oldPreviewPreference, forKey: "detailShowDiffPreview") }
+    else { UserDefaults.standard.removeObject(forKey: "detailShowDiffPreview") }
+  }
   let controller = RepositoryController()
   let savedFavorites = UserDefaults.standard.object(forKey: "favoriteRefs")
   defer {
@@ -85,6 +93,19 @@ func runFlowChecks() throws {
     else { UserDefaults.standard.removeObject(forKey: "favoriteRefs") }
   }
   _ = controller.view
+  check(controller.detailsSplit?.arrangedSubviews.count == 2
+    && controller.detailsSplit?.arrangedSubviews.first is Surface,
+    "Log sidebar contains only files and details, even with an old diff-preview preference")
+  let shortDetails = CommitDetails.text(for: Commit(hash: head.hash, parents: head.parents,
+    author: head.author, email: head.email, subject: "Subject"))
+  check(shortDetails.string.hasPrefix("Subject\n\n\(head.shortHash) \(head.author)")
+    && !shortDetails.string.contains("Parents:"),
+    "Commit metadata follows the subject without blank body sections or a separate hash header")
+  let emailRange = (shortDetails.string as NSString).range(of: "<\(head.email)>")
+  check(shortDetails.attribute(.link, at: emailRange.location, effectiveRange: nil) is URL,
+    "Commit email remains an actionable link")
+  check(CommitDetails.text(for: head).string.hasPrefix("Current subject\n\nCurrent body\n\n"),
+    "Commit details preserve the full message body")
   controller.watcher?.invalidate()
   controller.repository = repo
   var filtered = LogFilter()
@@ -185,6 +206,126 @@ func runFlowChecks() throws {
   check(controller.inlineDiff?.titleLabel.stringValue == "first.txt",
     "Previous File returns to the preceding changed file")
   if let preview = controller.inlineDiff { drain(preview.queue) }
+  let originalTheme = Theme.current
+  defer { Theme.apply(originalTheme, persist: false) }
+  let defaults = UserDefaults(suiteName: "GitDeskThemeChecks." + UUID().uuidString)!
+  defaults.set("unknown-theme", forKey: "appearanceTheme")
+  check(AppTheme.saved(in: defaults) == .dark, "Unknown theme falls back to Dark")
+  let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 700),
+    styleMask: [.titled], backing: .buffered, defer: false)
+  window.isReleasedWhenClosed = false
+  window.contentViewController = controller
+  window.setFrameOrigin(NSPoint(x: -10000, y: -10000))
+  window.orderFront(nil)
+  controller.view.layoutSubtreeIfNeeded()
+  controller.split.setPosition(320, ofDividerAt: 0)
+  controller.split.setPosition(850, ofDividerAt: 1)
+  controller.view.layoutSubtreeIfNeeded()
+  let outline = controller.branchOutline
+  outline.fitContentWidth()
+  let branchScroll = outline.enclosingScrollView!
+  let branchClip = branchScroll.contentView
+  check(branchScroll.hasHorizontalScroller && outline.frame.width > branchClip.bounds.width,
+    "Expanded long branches make the branch tree horizontally scrollable")
+  func rowForBranch(_ name: String) -> Int {
+    (0..<outline.numberOfRows).first { (outline.item(atRow: $0) as? BranchNode)?.branch?.name == name }!
+  }
+  func hoverBranch(_ row: Int) {
+    outline.scrollRowToVisible(row)
+    outline.layoutSubtreeIfNeeded()
+    _ = outline.rowView(atRow: row, makeIfNecessary: true)
+    outline.view(atColumn: 0, row: row, makeIfNecessary: true)?.layoutSubtreeIfNeeded()
+    outline.layoutSubtreeIfNeeded()
+    let point = outline.convert(NSPoint(x: outline.visibleRect.minX + 8,
+      y: outline.rect(ofRow: row).midY), to: nil)
+    let event = NSEvent.mouseEvent(with: .mouseMoved, location: point, modifierFlags: [],
+      timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 0,
+      clickCount: 0, pressure: 0)!
+    outline.mouseMoved(with: event)
+  }
+  let longRow = rowForBranch(longBranch)
+  let branchSelection = outline.selectedRowIndexes
+  hoverBranch(longRow)
+  check(outline.hoveredRow == longRow
+    && (outline.rowView(atRow: longRow, makeIfNecessary: false) as? SelectionRow)?.isHovered == true,
+    "Hover highlights the branch row without selecting it")
+  check(outline.selectedRowIndexes == branchSelection && outline.expansionView != nil,
+    "Clipped branch names expand without changing selection")
+  if let expanded = outline.expansionView, let content = window.contentView {
+    check(content.bounds.contains(expanded.frame) && expanded.textLayout.lines.count > 1,
+      "Long branch expansion wraps within the window")
+    check(expanded.hitTest(.zero) == nil, "Branch expansion passes clicks through")
+    check(expanded.fillColor.alphaComponent == 1, "Branch expansion covers neighboring content with an opaque gray fill")
+  }
+  hoverBranch(rowForBranch("main"))
+  check(outline.expansionView == nil, "Short branch names do not create an expansion")
+  branchClip.scroll(to: NSPoint(x: 100, y: branchClip.bounds.minY))
+  branchScroll.reflectScrolledClipView(branchClip)
+  check(branchClip.bounds.minX > 0, "The branch tree actually scrolls horizontally")
+  controller.rebuildBranches()
+  check(branchClip.bounds.minX > 0, "Branch refresh preserves horizontal scroll position")
+  outline.collapseItem(nil, collapseChildren: true)
+  outline.fitContentWidth()
+  check(outline.frame.width == branchScroll.contentSize.width && branchClip.bounds.minX == 0
+    && outline.expansionView == nil, "Collapsing branches shrinks content and clears clipped expansions")
+  outline.expandItem(nil, expandChildren: true)
+  outline.fitContentWidth()
+  controller.branchSearch.stringValue = "older"
+  controller.rebuildBranches()
+  check(outline.frame.width == branchScroll.contentSize.width,
+    "Filtering out long branches removes excess horizontal scroll space")
+  controller.branchSearch.stringValue = ""
+  controller.rebuildBranches()
+  NotificationCenter.default.post(name: NSWindow.didResignKeyNotification, object: window)
+  check(outline.expansionView == nil, "Changing focus dismisses the old branch expansion")
+  window.orderOut(nil)
+  hoverBranch(rowForBranch(longBranch))
+  check(outline.expansionView == nil, "A hidden window never creates a branch expansion")
+  print("Branch hover: highlight, bounded expansion, click-through, horizontal scrolling, refresh, collapse and filtering passed")
+  let diffWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 500),
+    styleMask: [.titled], backing: .buffered, defer: false)
+  diffWindow.isReleasedWhenClosed = false
+  diffWindow.contentViewController = viewer
+  defer { window.close(); diffWindow.close(); defaults.removeObject(forKey: "appearanceTheme") }
+  viewer.load(repository: repo, change: first)
+  drain(viewer.queue)
+  controller.commitMessage.string = "Theme switch draft 中文🙂"
+  controller.logTable.selectRowIndexes(IndexSet([0, 1]), byExtendingSelection: false)
+  drain(controller.queue)
+  let selection = controller.logTable.selectedRowIndexes
+  let workingSelection = controller.changesTable.selectedRowIndexes
+  let diffContents = viewer.after
+  let settings = AppearanceWindowController()
+  defer { settings.close() }
+  let menu = ThemeMenu()
+  for theme in AppTheme.allCases {
+    defaults.set(theme.rawValue, forKey: "appearanceTheme")
+    check(AppTheme.saved(in: defaults) == theme, "Theme preference round trips: " + theme.title)
+    Theme.apply(theme, persist: false)
+    check(NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == (theme.isDark ? .darkAqua : .aqua),
+      "Native appearance updates: " + theme.title)
+    check(controller.mainBody.layer?.cornerRadius == (theme.isIsland ? 10 : 0),
+      "Island panel geometry updates: " + theme.title)
+    check(controller.detailsSplit?.dividerThickness == 1 && controller.split.dividerThickness == 1
+      && controller.detailsSplit?.arrangedSubviews.allSatisfy { $0.layer?.cornerRadius == 0 } == true,
+      "Internal panes stay flat with thin dividers: " + theme.title)
+    check(controller.mainBody.layer?.backgroundColor == theme.color(.background).cgColor,
+      "Existing layer backgrounds update: " + theme.title)
+    check(viewer.table.backgroundColor.cgColor == theme.color(.background).cgColor,
+      "An existing diff window updates: " + theme.title)
+    check(controller.logTable.selectedRowIndexes == selection && controller.changesTable.selectedRowIndexes == workingSelection,
+      "Theme switching preserves log and file selection: " + theme.title)
+    check(controller.commitMessage.string == "Theme switch draft 中文🙂" && viewer.after == diffContents,
+      "Theme switching preserves draft and loaded diff: " + theme.title)
+    check(settings.themePopup.titleOfSelectedItem == theme.title, "Settings tracks the selected theme")
+    menu.menuNeedsUpdate(menu)
+    check(menu.items.filter { $0.state == .on }.map(\.title) == [theme.title], "Theme menu marks exactly one selection")
+    let text = Theme.text.usingColorSpace(.sRGB)!
+    let background = Theme.background.usingColorSpace(.sRGB)!
+    check(theme.isDark ? text.brightnessComponent > background.brightnessComponent : text.brightnessComponent < background.brightnessComponent,
+      "Text and background remain readable: " + theme.title)
+  }
+  print("Themes: four palettes, native appearance, live layers, multiple windows, selection/draft preservation and saved preferences passed")
   if !failures.isEmpty { throw GitFailure(failures.joined(separator: "\n")) }
   print("Functional flows: diff options/loading, filtered amend/draft safety, refresh/filter selection, branch-head and Commit file navigation passed")
 }
