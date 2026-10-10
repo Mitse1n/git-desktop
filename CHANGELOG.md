@@ -14,3 +14,7 @@ Notable changes are recorded here. The project is in early development; the app 
 ### Fixed
 
 - Reduce branch, tag, and Log filter latency by querying only filtered history and waking immediately when Git exits. Explicit and background refreshes continue to update the full repository state.
+
+### Changed
+
+- Replace the app icon with a white tile and layered cyan Git branch, packaged at all macOS icon sizes with transparent corners.

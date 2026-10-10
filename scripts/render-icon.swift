@@ -1,5 +1,19 @@
 import AppKit
 
+let artworkURL = URL(fileURLWithPath: #filePath)
+  .deletingLastPathComponent().deletingLastPathComponent()
+  .appendingPathComponent("assets/AppIcon.png")
+guard let artwork = NSImage(contentsOf: artworkURL) else {
+  fatalError("Cannot load app icon artwork at \(artworkURL.path)")
+}
+// The approved artwork includes presentation margins around the white tile.
+// Crop those margins and apply a clean transparent app-icon silhouette at every size.
+let artworkRect = NSRect(
+  x: artwork.size.width * 114 / 1254,
+  y: artwork.size.height * 121 / 1254,
+  width: artwork.size.width * 1025 / 1254,
+  height: artwork.size.height * 1020 / 1254)
+
 let destination = URL(fileURLWithPath: CommandLine.arguments[1])
 try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
 let sizes: [(String, Int)] = [
@@ -16,18 +30,12 @@ for (name, pixels) in sizes {
     colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
   NSGraphicsContext.saveGraphicsState()
   NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
+  NSGraphicsContext.current?.imageInterpolation = .high
   let dimension = CGFloat(pixels)
   let tile = NSRect(
     x: dimension * 0.07, y: dimension * 0.07, width: dimension * 0.86, height: dimension * 0.86)
-  NSColor(srgbRed: 0.15, green: 0.16, blue: 0.18, alpha: 1).setFill()
-  NSBezierPath(roundedRect: tile, xRadius: dimension * 0.18, yRadius: dimension * 0.18).fill()
-  let configuration = NSImage.SymbolConfiguration(pointSize: dimension * 0.5, weight: .regular)
-    .applying(.init(paletteColors: [NSColor(srgbRed: 0.42, green: 0.62, blue: 0.98, alpha: 1)]))
-  let symbol = NSImage(systemSymbolName: "arrow.triangle.branch", accessibilityDescription: nil)!
-    .withSymbolConfiguration(configuration)!
-  symbol.draw(
-    in: NSRect(
-      x: dimension * 0.28, y: dimension * 0.25, width: dimension * 0.44, height: dimension * 0.50))
+  NSBezierPath(roundedRect: tile, xRadius: dimension * 0.18, yRadius: dimension * 0.18).addClip()
+  artwork.draw(in: tile, from: artworkRect, operation: .sourceOver, fraction: 1)
   NSGraphicsContext.restoreGraphicsState()
   try bitmap.representation(using: .png, properties: [:])!.write(
     to: destination.appendingPathComponent(name))
