@@ -138,9 +138,16 @@ public final class GitRepository {
       .split(separator: 0).map { String(decoding: $0, as: UTF8.self) }
   }
   public func log(_ filter: LogFilter = LogFilter()) throws -> [Commit] {
-    guard hasHead else { return [] }
+    guard hasHead, filter.limit > 0 else { return [] }
+    let pattern = filter.regex && !filter.text.isEmpty
+      ? try NSRegularExpression(pattern: filter.text, options: filter.matchCase ? [] : .caseInsensitive)
+      : nil
+    // The display limit applies to matches, not to the history searched. Read in
+    // bounded batches to retain hash and ICU regex matching without loading every
+    // commit message into memory or changing the existing search syntax.
+    let pageSize = filter.text.isEmpty ? filter.limit : 2000
     var args = [
-      "log", "--topo-order", "--date-order", "-n", String(filter.limit),
+      "log", "--topo-order", "--date-order", "-n", String(pageSize),
       "--format=%H%x00%P%x00%an%x00%ae%x00%at%x00%s%x00%b%x00%D%x00",
     ]
     if let ref = filter.branch { args.append(try resolve(ref)) } else { args += ["--all", "HEAD"] }
@@ -151,34 +158,38 @@ public final class GitRepository {
     if let until = filter.until { args += ["--until=" + until] }
     if filter.firstParent { args.append("--first-parent") }
     if let path = filter.path, !path.isEmpty { args += ["--", path] }
-    let fields = try run(args).components(separatedBy: "\0")
-    var commits: [Commit] = []
-    var i = 0
-    while i + 7 < fields.count {
-      let hash = fields[i].trimmingCharacters(in: .whitespacesAndNewlines)
-      if !hash.isEmpty {
-        commits.append(
-          Commit(
-            hash: hash, parents: fields[i + 1].split(separator: " ").map(String.init),
-            author: fields[i + 2], email: fields[i + 3],
-            date: Date(timeIntervalSince1970: Double(fields[i + 4]) ?? 0), subject: fields[i + 5],
-            body: fields[i + 6].trimmingCharacters(in: .newlines),
-            decorations: fields[i + 7].components(separatedBy: ", ").filter { !$0.isEmpty }))
+    var result: [Commit] = []
+    var skip = 0
+    while true {
+      var pageArgs = args
+      pageArgs.insert("--skip=\(skip)", at: 1)
+      let fields = try run(pageArgs).components(separatedBy: "\0")
+      var commits: [Commit] = []
+      var i = 0
+      while i + 7 < fields.count {
+        let hash = fields[i].trimmingCharacters(in: .whitespacesAndNewlines)
+        if !hash.isEmpty {
+          commits.append(
+            Commit(
+              hash: hash, parents: fields[i + 1].split(separator: " ").map(String.init),
+              author: fields[i + 2], email: fields[i + 3],
+              date: Date(timeIntervalSince1970: Double(fields[i + 4]) ?? 0), subject: fields[i + 5],
+              body: fields[i + 6].trimmingCharacters(in: .newlines),
+              decorations: fields[i + 7].components(separatedBy: ", ").filter { !$0.isEmpty }))
+        }
+        i += 8
       }
-      i += 8
-    }
-    guard !filter.text.isEmpty else { return commits }
-    if filter.regex {
-      let pattern = try NSRegularExpression(
-        pattern: filter.text, options: filter.matchCase ? [] : .caseInsensitive)
-      return commits.filter { c in
-        let text = c.hash + " " + c.subject + "\n" + c.body
-        return pattern.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
+      let matches = commits.filter { commit in
+        guard !filter.text.isEmpty else { return true }
+        let text = commit.hash + " " + commit.subject + "\n" + commit.body
+        if let pattern {
+          return pattern.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
+        }
+        return text.range(of: filter.text, options: filter.matchCase ? [] : .caseInsensitive) != nil
       }
-    }
-    return commits.filter {
-      let value = $0.hash + " " + $0.subject + "\n" + $0.body
-      return value.range(of: filter.text, options: filter.matchCase ? [] : .caseInsensitive) != nil
+      result.append(contentsOf: matches.prefix(filter.limit - result.count))
+      if result.count == filter.limit || commits.count < pageSize || filter.text.isEmpty { return result }
+      skip += commits.count
     }
   }
   private func graphAncestry() throws -> [CommitAncestry] {
