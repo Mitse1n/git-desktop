@@ -604,22 +604,24 @@ extension RepositoryController {
   }
   func push() {
     guard let data = snapshot, !data.remotes.isEmpty,
-      let branch = data.branches.first(where: \.current)
+      data.branches.contains(where: \.current)
     else {
       statusLabel.stringValue = "Configure a remote and checkout a branch before pushing."
       return
     }
-    let remote = NSPopUpButton()
-    remote.addItems(withTitles: data.remotes)
-    guard
-      let values = prompt("Push Commits", fields: [("Remote branch", branch.name)], extra: remote),
-      !values[0].isEmpty
-    else { return }
-    let remoteName = remote.titleOfSelectedItem ?? data.remotes[0]
-    perform(
-      "Push",
-      work: { try $0.run(["push", "--set-upstream", remoteName, "HEAD:refs/heads/" + values[0]]) })
+    readHistory("Preparing push", work: { try $0.defaultPushTarget() }) { [weak self] target in
+      guard let self else { return }
+      let remote = NSPopUpButton()
+      remote.addItems(withTitles: data.remotes)
+      remote.selectItem(withTitle: target.remote)
+      guard let values = self.prompt("Push Commits",
+        fields: [("Remote branch / ref", target.branch)], extra: remote),
+        !values[0].isEmpty else { return }
+      let remoteName = remote.titleOfSelectedItem ?? target.remote
+      self.perform("Push", work: { try $0.push(remote: remoteName, branch: values[0]) })
+    }
   }
+
   func manageRemotes() {
     let menu = NSMenu()
     menu.addItem(

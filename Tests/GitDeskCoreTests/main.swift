@@ -85,6 +85,7 @@ let cases: [(String, (GitRepositoryTests) throws -> Void)] = [
   ("Filtered snapshot preserves state", { try $0.testFilteredSnapshotPreservesRepositoryState() }),
   ("Branch and tag checkout", { try $0.testBranchAndTagCheckout() }),
   ("Stash and restore", { try $0.testStashAndRestore() }),
+  ("Push targets and upstream preservation", { try $0.testPushTargetsAndUpstreamPreservation() }),
   ("Push, fetch and pull via local remote", { try $0.testLocalRemotePushFetchPull() }),
   ("Conflicts and abort", { try $0.testConflictDetectionStagesAndAbort() }),
   ("Merge commit and untracked files", { try $0.testMergeCommitKeepsParentsAndUntrackedFiles() }),
