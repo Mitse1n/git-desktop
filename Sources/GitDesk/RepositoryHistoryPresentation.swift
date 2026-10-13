@@ -8,6 +8,7 @@ struct RepositoryHistoryPresentation {
   private let topology: [CommitAncestry]
   private let branches: [Branch]
   private let currentBranch: String
+  let showLongEdges: Bool
   let graphs: [GraphRow]
   let currentBranchHistory: Set<String>
 
@@ -16,11 +17,12 @@ struct RepositoryHistoryPresentation {
       && topology == snapshot.graphAncestry && branches == snapshot.branches
       && currentBranch == snapshot.currentBranch
   }
-  static func prepare(_ snapshot: RepositorySnapshot, reusing previous: Self? = nil) -> Self {
-    if let previous, previous.matches(snapshot) { return previous }
-    return Self(snapshot, reusing: previous)
+  static func prepare(_ snapshot: RepositorySnapshot, reusing previous: Self? = nil, showLongEdges: Bool = false) -> Self {
+    if let previous, previous.matches(snapshot), previous.showLongEdges == showLongEdges { return previous }
+    return Self(snapshot, reusing: previous, showLongEdges: showLongEdges)
   }
-  init(_ data: RepositorySnapshot, reusing previous: Self? = nil) {
+  init(_ data: RepositorySnapshot, reusing previous: Self? = nil, showLongEdges: Bool = false) {
+    self.showLongEdges = showLongEdges
     commits = data.commits
     history = data.history
     topology = data.graphAncestry
@@ -37,7 +39,7 @@ struct RepositoryHistoryPresentation {
       }
       return priority($0) == priority($1) ? $0.name < $1.name : priority($0) < priority($1)
     }.map(\.hash)
-    graphs = CommitGraph.layout(data.commits, topology: data.graphAncestry, heads: graphHeads)
+    graphs = CommitGraph.layout(data.commits, topology: data.graphAncestry, heads: graphHeads, showLongEdges: showLongEdges)
     // Log filters change visible graph rows, not HEAD reachability. Reuse this
     // set instead of temporarily holding two full ancestor indexes/sets.
     if let previous, previous.topology == data.graphAncestry,

@@ -114,6 +114,7 @@ let diffCases: [(String, () -> Void)] = [
   ("Diff cancellation and 10000-line replacement", { DiffAndGraphTests().testDiffCancellationAndLargeReplacement() }),
   ("Graph branch colors follow connections", { DiffAndGraphTests().testGraphBranchColorsFollowConnections() }),
   ("Old nested merges and incomplete graph cache", { DiffAndGraphTests().testGraphOldNestedMergesAndIncompleteCache() }),
+  ("Graph long edges fold and reappear", { DiffAndGraphTests().testGraphLongEdgesFoldAndReappear() }),
   ("Graph branch order and disconnected heads", { DiffAndGraphTests().testGraphBranchOrderAndDisconnectedHeads() }),
   ("Graph connections meet commit centers", { DiffAndGraphTests().testGraphConnectionsMeetCommitCenters() }),
   ("Filtered graph ancestry", { DiffAndGraphTests().testFilteredGraphProjectsHiddenAncestors() }),

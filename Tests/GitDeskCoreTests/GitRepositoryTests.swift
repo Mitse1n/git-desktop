@@ -597,6 +597,43 @@ final class DiffAndGraphTests {
     XCTAssertTrue(merged[2].incomingEdges.contains { $0.to == merged[2].lane && $0.color == merged[2].color })
   }
 
+  func testGraphLongEdgesFoldAndReappear() {
+    let commits = [Commit(hash: "merge", parents: ["main1", "side"], author: "T", subject: "Merge")]
+      + (1...38).map { Commit(hash: "main\($0)", parents: [$0 == 38 ? "root" : "main\($0 + 1)"], author: "T", subject: "Main") }
+      + [Commit(hash: "side", parents: ["root"], author: "T", subject: "Side"),
+         Commit(hash: "root", parents: [], author: "T", subject: "Root")]
+    let compact = CommitGraph.layout(commits)
+    let expanded = CommitGraph.layout(commits, showLongEdges: true)
+    for row in compact + expanded {
+      XCTAssertTrue(row.segments.allSatisfy { max($0.fromLane, $0.toLane) < Double(row.laneCount) })
+      XCTAssertTrue(row.arrows.allSatisfy { $0.lane < row.laneCount })
+    }
+    XCTAssertEqual(compact.map(\.color), expanded.map(\.color))
+    XCTAssertEqual(compact[1].arrows.count, 1)
+    XCTAssertTrue(compact[1].arrows[0].pointsDown)
+    XCTAssertEqual(compact[1].arrows[0].color, compact[39].color)
+    XCTAssertTrue(compact[2..<37].allSatisfy { $0.laneCount == 1 && $0.arrows.isEmpty })
+    XCTAssertEqual(compact[38].arrows.count, 1)
+    XCTAssertFalse(compact[38].arrows[0].pointsDown)
+    XCTAssertEqual(compact[38].arrows[0].color, compact[39].color)
+    XCTAssertTrue(compact[39].incoming)
+    XCTAssertTrue(expanded.allSatisfy { $0.arrows.isEmpty })
+    XCTAssertTrue(expanded[2..<38].allSatisfy { $0.laneCount == 2 })
+    // The threshold is measured in displayed rows after filtering.
+    let filtered = CommitGraph.layout([commits[0], commits[1], commits[39], commits[40]], ancestry: commits)
+    XCTAssertTrue(filtered.allSatisfy { $0.arrows.isEmpty })
+    XCTAssertTrue(filtered[2].incoming)
+    for distance in [29, 30] {
+      let visible = [commits[0]] + Array(commits[1..<distance]) + Array(commits[39...])
+      let rows = CommitGraph.layout(visible, ancestry: commits)
+      XCTAssertEqual(rows[1].arrows.isEmpty, distance == 29)
+    }
+    let page = CommitGraph.layout([Commit(hash: "tip", parents: ["unloaded"], author: "T", subject: "Tip")])
+    XCTAssertEqual(page[0].arrows.count, 1)
+    XCTAssertTrue(page[0].arrows[0].pointsDown)
+    XCTAssertTrue(CommitGraph.layout([commits.last!])[0].arrows.isEmpty)
+  }
+
   func testGraphBranchOrderAndDisconnectedHeads() {
     // Same topology and branch-tip precedence as the reported new-api region.
     let commits = [
