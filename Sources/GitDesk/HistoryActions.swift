@@ -119,7 +119,9 @@ extension RepositoryController {
     }) { [weak self] data, presentation in
       guard let self else { return }
       self.loadToken += 1
+      self.invalidateHistoryPage()
       self.filter = target
+      self.loadedLogFilter = target
       self.logSearch.stringValue = ""
       self.datePopup.selectItem(at: 0)
       self.regexButton.contentTintColor = Theme.text

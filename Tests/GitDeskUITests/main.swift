@@ -2,7 +2,7 @@ import AppKit
 import GitDeskCore
 
 defer {
-  do { try runFlowChecks() }
+  do { try runHistoryPaginationChecks(); try runFlowChecks() }
   catch { print(error.localizedDescription); exit(1) }
 }
 

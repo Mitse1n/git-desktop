@@ -18,12 +18,14 @@ Notable changes are recorded here. The project is in early development; the app 
 - History-edit validation and regression coverage for preserving unrelated staging, root commits, annotated/binary patches, file modes, quoted paths, and conflict recovery.
 
 - Native macOS Git client with history graph, branch management, selected-file commits, diffs, remotes, stash, and conflict tools.
-- Dependency-free regression executable covering 46 core Git, diff, and graph scenarios.
+- Dependency-free regression executable covering 47 core Git, diff, and graph scenarios.
 - Reusable local performance benchmarks with frozen source/probe snapshots, memory high-water marks, and four-theme rendering comparisons.
 - English and Simplified Chinese documentation, MIT license, contribution and security policies, and GitHub issue and pull request templates.
 - macOS CI for regression checks, app packaging, signature verification, and downloadable development artifacts.
 
 ### Fixed
+
+- Load older log and search results when scrolling near the bottom, with end detection, stale-request guards, and selection/viewport preservation. Reset the loading depth when filters change and retain it on refresh.
 
 - Inset branch-tree disclosure arrows and content together so selected top-level groups retain padding inside their rounded highlight; include the inset when sizing long branch rows.
 

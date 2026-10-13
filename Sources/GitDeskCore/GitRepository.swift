@@ -199,6 +199,15 @@ public final class GitRepository {
       skip += commits.count
     }
   }
+  public func logPage(_ filter: LogFilter = LogFilter()) throws -> LogPage {
+    guard filter.limit > 0, filter.limit < Int.max else {
+      throw GitFailure("The history page size is out of range.")
+    }
+    var probe = filter
+    probe.limit += 1
+    let commits = try log(probe)
+    return LogPage(commits: Array(commits.prefix(filter.limit)), hasMore: commits.count > filter.limit)
+  }
   private func graphAncestry(gitDirectory: URL) throws -> [CommitAncestry] {
     // --all includes notes, replacement and custom refs, not only branch/tag refs.
     // show-ref also resolves detached HEAD, so switching to an unreferenced commit
@@ -321,24 +330,27 @@ public final class GitRepository {
     }?.1
     var historyFilter = LogFilter()
     historyFilter.limit = filter.limit
-    let history = try log(historyFilter)
+    let historyPage = try logPage(historyFilter)
+    let page = filter == historyFilter ? historyPage : try logPage(filter)
     return RepositorySnapshot(
-      branches: refs, commits: filter == historyFilter ? history : try log(filter),
+      branches: refs, commits: page.commits,
       changes: try status(), currentBranch: branch.isEmpty ? "Detached HEAD" : branch,
       remotes: try run(["remote"]).split(separator: "\n").map(String.init),
       stashes: try run(["stash", "list", "--format=%gd: %s"]).split(separator: "\n").map(
-        String.init), operation: operation, history: history,
-      graphAncestry: try graphAncestry(gitDirectory: URL(fileURLWithPath: gitDir)))
+        String.init), operation: operation, history: historyPage.commits,
+      graphAncestry: try graphAncestry(gitDirectory: URL(fileURLWithPath: gitDir)), hasMoreCommits: page.hasMore)
   }
   // Changing a history filter does not change refs, the worktree, or stashes.
   // Keep their last snapshot until an explicit/background repository refresh.
   public func filteredSnapshot(from snapshot: RepositorySnapshot, filter: LogFilter) throws
     -> RepositorySnapshot
   {
-    RepositorySnapshot(
-      branches: snapshot.branches, commits: try log(filter), changes: snapshot.changes,
+    let page = try logPage(filter)
+    return RepositorySnapshot(
+      branches: snapshot.branches, commits: page.commits, changes: snapshot.changes,
       currentBranch: snapshot.currentBranch, remotes: snapshot.remotes, stashes: snapshot.stashes,
-      operation: snapshot.operation, history: snapshot.history, graphAncestry: snapshot.graphAncestry)
+      operation: snapshot.operation, history: snapshot.history, graphAncestry: snapshot.graphAncestry,
+      hasMoreCommits: page.hasMore)
   }
   public static func parseNameStatus(_ data: Data) -> [FileChange] {
     let fields = data.split(separator: 0).map { String(decoding: $0, as: UTF8.self) }

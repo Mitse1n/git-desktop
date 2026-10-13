@@ -77,6 +77,15 @@ public struct LogFilter: Equatable {
   public var firstParent = false
   public var limit = 2000
   public init() {}
+  public func hasSameCriteria(as other: LogFilter) -> Bool {
+    var lhs = self, rhs = other
+    lhs.limit = 0; rhs.limit = 0
+    return lhs == rhs
+  }
+}
+public struct LogPage {
+  public let commits: [Commit]
+  public let hasMore: Bool
 }
 // Graph ordering needs ancestry beyond the visible log limit, but not messages,
 // authors or decorations for every historical commit.
@@ -91,6 +100,7 @@ public struct CommitAncestry: Equatable {
 public struct RepositorySnapshot: Equatable {
   public let branches: [Branch]
   public let commits: [Commit]
+  public let hasMoreCommits: Bool
   public let history: [Commit]
   public let graphAncestry: [CommitAncestry]
   public let changes: [FileChange]
@@ -101,10 +111,11 @@ public struct RepositorySnapshot: Equatable {
   public init(
     branches: [Branch], commits: [Commit], changes: [FileChange], currentBranch: String,
     remotes: [String], stashes: [String], operation: String?, history: [Commit]? = nil,
-    graphAncestry: [CommitAncestry]? = nil
+    graphAncestry: [CommitAncestry]? = nil, hasMoreCommits: Bool = false
   ) {
     self.branches = branches
     self.commits = commits
+    self.hasMoreCommits = hasMoreCommits
     self.history = history ?? commits
     self.graphAncestry = graphAncestry ?? (history ?? commits).map {
       CommitAncestry(hash: $0.hash, parents: $0.parents)

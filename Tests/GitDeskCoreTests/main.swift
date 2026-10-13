@@ -83,6 +83,7 @@ let cases: [(String, (GitRepositoryTests) throws -> Void)] = [
   ("Symlinks and preview limits", { try $0.testSymlinkAndPreviewLimits() }),
   ("Rename parsing and commit", { try $0.testRenameParsingAndSelectedRenameCommit() }),
   ("Index and working diff", { try $0.testIndexAndWorkingDiff() }),
+  ("Progressive history pages and exhaustion", { try $0.testProgressiveHistoryPages() }),
   ("Search reaches history beyond display limit", { try $0.testSearchBeyondDisplayLimit() }),
   ("Log filters", { try $0.testLogMessageRegexCaseAuthorPathAndBranchFilters() }),
   ("Filtered snapshot preserves state", { try $0.testFilteredSnapshotPreservesRepositoryState() }),

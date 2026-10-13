@@ -399,6 +399,16 @@ class MenuTable: NSTableView {
 }
 /// Keep the message column flexible while reserving only the space metadata needs.
 final class LogTable: MenuTable {
+  var onNearBottom: (() -> Void)?
+  func requestMoreIfNeeded() {
+    guard window != nil, !isHiddenOrHasHiddenAncestor, numberOfRows > 0,
+      visibleRect.height > 0 else { return }
+    let visible = rows(in: visibleRect)
+    if visible.location != NSNotFound, visible.length > 0,
+      visible.location + visible.length >= numberOfRows - 10 {
+      onNearBottom?()
+    }
+  }
   var graphWidth: CGFloat = 44
   var graphLaneCounts: [Int] = []
   var authorWidth: CGFloat = 90
@@ -500,6 +510,7 @@ final class LogTable: MenuTable {
     dismissTextExpansion()
     super.scrollWheel(with: event)
     updateHoveredRow(at: event.locationInWindow)
+    requestMoreIfNeeded()
   }
   private func updateHoveredRow(at location: NSPoint? = nil) {
     guard columnDrag == nil else { return }
@@ -596,6 +607,7 @@ final class LogTable: MenuTable {
         self?.dismissTextExpansion()
         self?.fitColumns()
         self?.updateHoveredRow()
+        self?.requestMoreIfNeeded()
       }
     }
     updateHoveredRow()

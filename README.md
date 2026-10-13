@@ -31,7 +31,7 @@ GitDesk brings commit history, branches, selected-file commits, and diffs into o
 
 - **Repository tools:** initialize/open repositories, recent repositories, repository-local identity, stash, text conflict resolution, cherry-pick, revert, reset, and continue/abort operations.
 
-History refresh preserves multiple selections by revision. The branch toolbar star toggles the selected favorite, and its target button locates that branch's tip in the log. Amend reads HEAD even when it is filtered out and restores the previous draft when cancelled. Commit previews support previous/next file navigation, and whitespace options stay active across files and layout changes.
+History initially loads 2,000 commits and loads another batch as you scroll near the bottom, including filtered and search results. It stops at the end of the matching history. Refresh retains the loaded depth; changing filters starts a new first batch. History refresh preserves multiple selections by revision. The branch toolbar star toggles the selected favorite, and its target button locates that branch's tip in the log. Amend reads HEAD even when it is filtered out and restores the previous draft when cancelled. Commit previews support previous/next file navigation, and whitespace options stay active across files and layout changes.
 
 <details>
 <summary>Commit and diff screenshots</summary>

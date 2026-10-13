@@ -871,9 +871,9 @@ extension RepositoryController {
     menu.addItem(menuItem(branchHidden ? "Show Git Branches" : "Hide Git Branches") { [weak self] in
       self?.toggleBranches()
     })
-    menu.addItem(menuItem("Load More History (10,000)") { [weak self] in
-      self?.filter.limit = 10000
-      self?.refresh()
+    menu.addItem(menuItem("Load More History", enabled: snapshot?.hasMoreCommits == true
+      && !isBusy && !isRefreshing && !isLoadingMoreHistory) { [weak self] in
+      self?.loadMoreHistory()
     })
     popup(menu, anchor: anchor)
   }
@@ -890,17 +890,21 @@ extension RepositoryController {
     queue.async { [weak self] in
       do {
         let hash = try repo.resolve(values[0])
-        let commits = try repo.log()
+        let page = try repo.logPage()
+        let commits = page.commits
         func replacingLog(_ old: RepositorySnapshot) -> RepositorySnapshot {
           RepositorySnapshot(branches: old.branches, commits: commits, changes: old.changes,
             currentBranch: old.currentBranch, remotes: old.remotes, stashes: old.stashes,
-            operation: old.operation)
+            operation: old.operation, history: old.history, graphAncestry: old.graphAncestry,
+            hasMoreCommits: page.hasMore)
         }
         let presentation = previousSnapshot.map { RepositoryHistoryPresentation.prepare(replacingLog($0)) }
         DispatchQueue.main.async {
           guard let self, self.epoch == currentEpoch else { return }
           if let index = commits.firstIndex(where: { $0.hash == hash }) {
+            self.invalidateHistoryPage()
             self.filter = LogFilter()
+            self.loadedLogFilter = self.filter
             self.logSearch.stringValue = ""
             if let old = self.snapshot {
               self.snapshot = replacingLog(old)

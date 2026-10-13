@@ -113,7 +113,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
   var pendingDiffHash: String?
   var selectedCommit: Commit?
   var displayedLogCommits: [Commit] = []
-  private var historyPresentation: RepositoryHistoryPresentation?
+  private(set) var historyPresentation: RepositoryHistoryPresentation?
   var rebuildingLog = false
   var detailFiles: [FileChange] = []
   var detailNodes: [FileNode] = []
@@ -234,7 +234,10 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     didSet { UserDefaults.standard.set(showDetails, forKey: "detailShowDetails") }
   }
   var detailTextArea: NSView?
-  var historyLimit = 2000
+  var historyPageSize = 2000
+  var loadedLogFilter: LogFilter?
+  var isLoadingMoreHistory = false
+  var historyPageToken = 0
   var detailsSplit: NSSplitView?
   var initializedLayout = false
   var favoriteRefs: Set<String> {
@@ -248,7 +251,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
       [weak self] _ in self?.updateThemeLayout()
     }
     watcher = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
-      guard let self, self.repository != nil, !self.isBusy, !self.isRefreshing, self.debounce == nil,
+      guard let self, self.repository != nil, !self.isBusy, !self.isRefreshing, !self.isLoadingMoreHistory, self.debounce == nil,
         self.view.window?.attachedSheet == nil, NSApp.modalWindow == nil
       else { return }
       self.refresh(silent: true)
@@ -556,6 +559,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     logTable.menuProvider = { [weak self] in self?.commitContextMenu() ?? NSMenu() }
     logTable.target = self
     logTable.doubleAction = nil
+    logTable.onNearBottom = { [weak self] in self?.loadMoreHistory() }
     let logArea = Surface()
     pin(scrollView(logTable), to: logArea)
     let empty = NSStackView(views: [emptyLabel, emptyAction])
@@ -718,6 +722,8 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     amend.state = .off
     amendChanged()
     epoch += 1
+    invalidateHistoryPage()
+    loadedLogFilter = nil
     let currentEpoch = epoch
     consoleText.string = ""
     inlineDiff?.clear()
@@ -727,6 +733,10 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     historyPresentation = nil
     logTable.deselectAll(nil)
     displayedLogCommits = []
+    if let scroll = logTable.enclosingScrollView {
+      scroll.contentView.scroll(to: .zero)
+      scroll.reflectScrolledClipView(scroll.contentView)
+    }
     comparison = nil
     detailToken += 1
     allAuthors = []
@@ -739,6 +749,8 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     commitAuthor = ""
     commitSignOff = false
     filter = LogFilter()
+    filter.limit = historyPageSize
+    let openingFilter = filter
     logSearch.stringValue = ""
     branchSearch.stringValue = ""
     datePopup.selectItem(at: 0)
@@ -756,7 +768,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
             self.appendConsole(cmd, output: preview, status: code)
           }
         }
-        let data = try repo.snapshot()
+        let data = try repo.snapshot(filter: openingFilter)
         let presentation = RepositoryHistoryPresentation.prepare(data)
         let ignored = showIgnored ? try repo.ignoredPaths() : []
         let modules = CommitModule.discover(in: repo.workingDirectory)
@@ -764,6 +776,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
         DispatchQueue.main.async {
           guard let self, self.epoch == currentEpoch else { return }
           self.repository = repo
+          self.loadedLogFilter = openingFilter
           self.snapshot = data
           self.ignoredPaths = self.showIgnoredFiles ? ignored : []
           self.commitModules = modules
@@ -794,6 +807,10 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
   }
   func refresh(silent: Bool = false, logOnly: Bool = false) {
     guard let repo = repository, !isBusy else { return }
+    invalidateHistoryPage()
+    if let loadedLogFilter, !filter.hasSameCriteria(as: loadedLogFilter) {
+      filter.limit = historyPageSize
+    }
     if isRefreshing {
       loadToken += 1
       pendingRefresh = true
@@ -833,6 +850,15 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
           self.isRefreshing = false
           self.progress.stopAnimation(nil)
           if self.loadToken == token && self.epoch == currentEpoch {
+            if let loaded = self.loadedLogFilter,
+              !filter.hasSameCriteria(as: loaded) || filter.limit < loaded.limit,
+              let scroll = self.logTable.enclosingScrollView {
+              // A new result set starts at the top. Keeping an old bottom
+              // position could immediately request several unintended pages.
+              scroll.contentView.scroll(to: .zero)
+              scroll.reflectScrolledClipView(scroll.contentView)
+            }
+            self.loadedLogFilter = filter
             if changed {
               let modulesChanged = previousModules != modules
               self.snapshot = data
@@ -878,6 +904,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     _ title: String, work: @escaping (GitRepository) throws -> Void, completion: (() -> Void)? = nil
   ) {
     guard let repo = repository, !isBusy else { return }
+    invalidateHistoryPage()
     isBusy = true
     commitMessage.isEditable = false
     loadToken += 1
@@ -986,7 +1013,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     emptyLabel.superview?.isHidden = !data.commits.isEmpty
     if data.commits.isEmpty {
       emptyLabel.stringValue =
-        filter == LogFilter() ? "No changes committed." : "No commits match your filters."
+        filter.hasSameCriteria(as: LogFilter()) ? "No changes committed." : "No commits match your filters."
       emptyAction.title = "Commit local changes (⌘K)"
     }
     rebuildWorkingRows()
