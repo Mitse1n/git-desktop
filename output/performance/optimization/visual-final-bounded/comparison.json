@@ -1,0 +1,82 @@
+[
+  {
+    "name": "dark-log",
+    "identical": true
+  },
+  {
+    "name": "dark-split",
+    "identical": true
+  },
+  {
+    "name": "dark-swift-split",
+    "identical": true
+  },
+  {
+    "name": "dark-swift-unified",
+    "identical": true
+  },
+  {
+    "name": "dark-unified",
+    "identical": true
+  },
+  {
+    "name": "islandDark-log",
+    "identical": true
+  },
+  {
+    "name": "islandDark-split",
+    "identical": true
+  },
+  {
+    "name": "islandDark-swift-split",
+    "identical": true
+  },
+  {
+    "name": "islandDark-swift-unified",
+    "identical": true
+  },
+  {
+    "name": "islandDark-unified",
+    "identical": true
+  },
+  {
+    "name": "islandLight-log",
+    "identical": true
+  },
+  {
+    "name": "islandLight-split",
+    "identical": true
+  },
+  {
+    "name": "islandLight-swift-split",
+    "identical": true
+  },
+  {
+    "name": "islandLight-swift-unified",
+    "identical": true
+  },
+  {
+    "name": "islandLight-unified",
+    "identical": true
+  },
+  {
+    "name": "light-log",
+    "identical": true
+  },
+  {
+    "name": "light-split",
+    "identical": true
+  },
+  {
+    "name": "light-swift-split",
+    "identical": true
+  },
+  {
+    "name": "light-swift-unified",
+    "identical": true
+  },
+  {
+    "name": "light-unified",
+    "identical": true
+  }
+]

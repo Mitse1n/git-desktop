@@ -1,0 +1,6 @@
+[0/1] Planning build
+Building for production...
+[0/2] Write swift-version--1AB21518FC5DEDBE.txt
+Build of product 'GitDesk' complete! (0.13s)
+/Users/gcys_fz/Documents/ChatGPT/git-desktop/dist/GitDesk.app: replacing existing signature
+Built /Users/gcys_fz/Documents/ChatGPT/git-desktop/dist/GitDesk.app

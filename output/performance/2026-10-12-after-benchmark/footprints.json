@@ -1,0 +1,20 @@
+[
+  {
+    "pid": 64578,
+    "timestamp": "2026-10-12T02:56:42.093395+00:00",
+    "fields": {
+      "Physical footprint": "81.2M",
+      "Physical footprint (peak)": "148.2M"
+    },
+    "exit": 0
+  },
+  {
+    "pid": 80113,
+    "timestamp": "2026-10-12T02:56:42.932668+00:00",
+    "fields": {
+      "Physical footprint": "2.4G",
+      "Physical footprint (peak)": "2.6G"
+    },
+    "exit": 0
+  }
+]

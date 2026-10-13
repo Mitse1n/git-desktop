@@ -1,0 +1,24 @@
+[
+  {
+    "root_pid": 64578,
+    "label": "existing-workspaces",
+    "samples": 127,
+    "root_rss_mib_median": 67.609375,
+    "root_rss_mib_max": 73.328125,
+    "tree_rss_mib_median": 67.609375,
+    "tree_rss_mib_max": 73.328125,
+    "tree_cpu_percent_median": 0.0,
+    "tree_cpu_percent_max": 3.9768118780512065
+  },
+  {
+    "root_pid": 80113,
+    "label": "existing-workspaces",
+    "samples": 127,
+    "root_rss_mib_median": 353.4375,
+    "root_rss_mib_max": 768.734375,
+    "tree_rss_mib_median": 649.96875,
+    "tree_rss_mib_max": 1096.15625,
+    "tree_cpu_percent_median": 0.0,
+    "tree_cpu_percent_max": 88.95622030131224
+  }
+]

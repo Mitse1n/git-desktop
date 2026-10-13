@@ -1,0 +1,67 @@
+{
+  "schema": 1,
+  "timestamp": "2026-10-12T02:49:07.467102+00:00",
+  "system": "macOS-15.5-arm64-arm-64bit",
+  "chip": "Apple M4",
+  "ram_bytes": "17179869184",
+  "git": "git version 2.39.5 (Apple Git-154)",
+  "swift": "Apple Swift version 6.1.2 (swiftlang-6.1.2.1.2 clang-1700.0.13.5)\nTarget: arm64-apple-macosx15.0",
+  "head": "b58ae3656f58a8b53acc0c98c4d130fe79863493",
+  "dirty": "M CHANGELOG.md\n M Sources/GitDesk/LogTextExpansion.swift\n M Sources/GitDesk/Theme.swift\n M Tests/GitDeskUITests/FlowChecks.swift\n?? output/\n?? scripts/performance/",
+  "source_sha256": "90fc7376be6802a3a76e6f7a5b33b0f30b805cb8f0dd26511a5d2dc5f439702d",
+  "idea_version": "2026.2.3",
+  "idea_build": "262.10968.63",
+  "iterations": 20,
+  "fixtures": "/private/tmp/gitdesk-perf-v1",
+  "probe_sha256": "ec3e3564a5470967f04d2dc6a5f5dca794a593407bd65f3c487eb8c2a67f946c",
+  "fixture_specs": {
+    "small": [
+      100,
+      20,
+      5,
+      0,
+      5,
+      0
+    ],
+    "medium": [
+      10000,
+      1000,
+      100,
+      0,
+      30,
+      0
+    ],
+    "history100k": [
+      100000,
+      100,
+      10,
+      0,
+      30,
+      0
+    ],
+    "dirty": [
+      1000,
+      10000,
+      2000,
+      10000,
+      30,
+      0
+    ],
+    "refs1000": [
+      10000,
+      100,
+      10,
+      0,
+      1000,
+      0
+    ],
+    "wide200": [
+      10000,
+      100,
+      10,
+      0,
+      200,
+      200
+    ]
+  }
+}

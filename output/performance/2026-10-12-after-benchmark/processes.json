@@ -1,0 +1,57 @@
+{
+  "64578": {
+    "root": 64578,
+    "ppid": 1,
+    "command": "/Users/gcys_fz/Documents/ChatGPT/git-desktop/dist/GitDesk.app/Contents/MacOS/GitDesk"
+  },
+  "80234": {
+    "root": 80113,
+    "ppid": 80207,
+    "command": "/Applications/IntelliJ IDEA.app/Contents/plugins/jcef-plugin/jcef/Frameworks/cef_server.app/Contents/Frameworks/cef_server Helper (Renderer).app/Contents/MacOS/cef_server Helper (Renderer)"
+  },
+  "80238": {
+    "root": 80113,
+    "ppid": 80113,
+    "command": "/Users/gcys_fz/.local/bin/node"
+  },
+  "80207": {
+    "root": 80113,
+    "ppid": 80113,
+    "command": "/Applications/IntelliJ IDEA.app/Contents/plugins/jcef-plugin/jcef/Frameworks/cef_server.app/Contents/MacOS/cef_server"
+  },
+  "80113": {
+    "root": 80113,
+    "ppid": 1,
+    "command": "/Applications/IntelliJ IDEA.app/Contents/MacOS/idea"
+  },
+  "80210": {
+    "root": 80113,
+    "ppid": 80207,
+    "command": "/Applications/IntelliJ IDEA.app/Contents/plugins/jcef-plugin/jcef/Frameworks/cef_server.app/Contents/Frameworks/cef_server Helper.app/Contents/MacOS/cef_server Helper"
+  },
+  "80212": {
+    "root": 80113,
+    "ppid": 80207,
+    "command": "/Applications/IntelliJ IDEA.app/Contents/plugins/jcef-plugin/jcef/Frameworks/cef_server.app/Contents/Frameworks/cef_server Helper.app/Contents/MacOS/cef_server Helper"
+  },
+  "80213": {
+    "root": 80113,
+    "ppid": 80207,
+    "command": "/Applications/IntelliJ IDEA.app/Contents/plugins/jcef-plugin/jcef/Frameworks/cef_server.app/Contents/Frameworks/cef_server Helper.app/Contents/MacOS/cef_server Helper"
+  },
+  "80186": {
+    "root": 80113,
+    "ppid": 80113,
+    "command": "/Applications/IntelliJ IDEA.app/Contents/bin/fsnotifier"
+  },
+  "95208": {
+    "root": 80113,
+    "ppid": 80113,
+    "command": "(jspawnhelper)"
+  },
+  "95312": {
+    "root": 80113,
+    "ppid": 80113,
+    "command": "/Users/gcys_fz/Library/Caches/JetBrains/IntelliJIdea2026.2/code-provenance/chatter-105-2dda02/chatter"
+  }
+}

@@ -1,0 +1,61 @@
+[0/1] Planning build
+Building for debugging...
+[0/3] Write swift-version--1AB21518FC5DEDBE.txt
+Build of product 'GitDeskChecks' complete! (0.13s)
+PASS Old branch graph beyond log limit
+PASS Undo and reword preserve local changes
+PASS Undo root and history guards
+PASS Revision tree and patch round trip
+PASS Rebase reorder, reword and drop
+PASS Rebase squash, fixup and root
+PASS Rebase conflict recovery
+PASS Automatic squash, drop all and stale session
+PASS History plan validation and navigation
+PASS Unborn repository and initial commit
+PASS Ignored files stay read-only and collapsed
+PASS Selected commit preserves staging
+PASS Commit author and sign-off
+PASS Failed commit preserves index
+PASS Amend preserves unrelated staging
+PASS NUL paths, Unicode and pathspecs
+PASS Symlinks and preview limits
+PASS Rename parsing and commit
+PASS Index and working diff
+PASS Log filters
+PASS Filtered snapshot preserves state
+PASS Branch and tag checkout
+PASS Stash and restore
+PASS Push, fetch and pull via local remote
+PASS Conflicts and abort
+PASS Merge commit and untracked files
+PASS Rebase, worktree and annotated tag
+PASS Cherry-pick, revert and reset
+PASS Discard and unstage
+PASS Graph branch colors follow connections
+PASS Old nested merges and incomplete graph cache
+PASS Graph branch order and disconnected heads
+PASS Graph connections meet commit centers
+PASS Filtered graph ancestry
+PASS Line alignment
+PASS Deleted and empty files
+PASS Binary, whitespace and final newline
+PASS Merge graph lanes
+38 scenarios, 0 failures
+Sources/GitDesk/RepositoryWindow.swift:25:13: warning: 'showsBaselineSeparator' was deprecated in macOS 15.0: No longer supported
+23 |     let toolbar = NSToolbar(identifier: "RepositoryHeader")
+24 |     toolbar.displayMode = .iconOnly
+25 |     toolbar.showsBaselineSeparator = false
+   |             `- warning: 'showsBaselineSeparator' was deprecated in macOS 15.0: No longer supported
+26 |     window.toolbarStyle = .unifiedCompact
+27 |     window.toolbar = toolbar
+Console oversized/Unicode/binary/repeated-output checks passed (1.347s)
+Log text expansion: subject/author/date, wrapping, window edges, height truncation and Unicode checks passed
+Graph rendering: branch dots/lines and passing main connections match in all four themes
+Log column resizing: both dividers, selection, refresh, viewport resize, scrolling and minimum widths passed
+Branch tree: current marker, default remote favorites, grouped/flat order, filtering and custom favorites passed
+Commit view options: directory/module grouping, compaction, collapse, selection identity and read-only ignored entries passed
+Other view options: historical directory/module/flat trees, hidden column resizing and ignored path selection passed
+Log appearance refresh preserves multiple selected commits
+Branch hover: highlight, bounded expansion, click-through, horizontal scrolling, refresh, collapse and filtering passed
+Themes: four palettes, native appearance, live layers, multiple windows, selection/draft preservation and saved preferences passed
+Functional flows: diff options/loading, filtered amend/draft safety, refresh/filter selection, branch-head and Commit file navigation passed

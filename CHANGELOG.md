@@ -18,11 +18,24 @@ Notable changes are recorded here. The project is in early development; the app 
 - History-edit validation and regression coverage for preserving unrelated staging, root commits, annotated/binary patches, file modes, quoted paths, and conflict recovery.
 
 - Native macOS Git client with history graph, branch management, selected-file commits, diffs, remotes, stash, and conflict tools.
-- Dependency-free regression executable covering 38 core Git, diff, and graph scenarios.
+- Dependency-free regression executable covering 46 core Git, diff, and graph scenarios.
+- Reusable local performance benchmarks with frozen source/probe snapshots, memory high-water marks, and four-theme rendering comparisons.
 - English and Simplified Chinese documentation, MIT license, contribution and security policies, and GitHub issue and pull request templates.
 - macOS CI for regression checks, app packaging, signature verification, and downloadable development artifacts.
 
 ### Fixed
+
+- Inset branch-tree disclosure arrows and content together so selected top-level groups retain padding inside their rounded highlight; include the inset when sizing long branch rows.
+
+- Match IDEA's current-branch log highlighting: suppress the background when filtering to HEAD or the checked-out branch and in detached HEAD; use dedicated theme colors instead of selection blue.
+
+- Use rounded selection highlights in historical changed-file trees and open the selected file's existing Diff window with Space, without treating key repeats or modified Space as preview requests.
+
+- Match branch-row selection backgrounds to the existing rounded hover highlight, including viewport insets while horizontally scrolling.
+
+- Reuse Diff calculations when switching layouts, cancel obsolete work, and accelerate exact ordered/unique-line comparisons while preserving original alignment for ambiguous input. Avoid rebuilding unchanged history during working-tree refreshes, prepare history presentation off the main thread, and cache ancestry with ref/boundary invalidation and concurrent-update publication guards.
+
+- Make truncated author/date hover expansion respond across the full metadata cell, pass label pointer events through to the log, and allow expansion in visible inactive windows.
 
 - Keep graph ancestry independent of the visible log limit. Old branch filters retain main-line tracks, nested merge ordering, distinct branch colors, and current-branch shading even when none of their commits are in the recent log. Cache lightweight parent links on repository refresh and reuse them when filtering.
 

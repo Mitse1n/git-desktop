@@ -1,0 +1,89 @@
+{
+  "schema": 1,
+  "tool_sha256": {
+    "bench.py": "a0b2ceb57a7526ebb5bb3e4c02220e39178cd30d1fc4dfc925078800d6a6483f",
+    "main.swift": "df3f4e778cda7caaf3dfffa07268d42dfc1d29db74527abc659b45d2b4662245"
+  },
+  "timestamp": "2026-10-12T06:31:09.128254+00:00",
+  "system": "macOS-15.5-arm64-arm-64bit",
+  "chip": "Apple M4",
+  "ram_bytes": "17179869184",
+  "git": "git version 2.39.5 (Apple Git-154)",
+  "swift": "Apple Swift version 6.1.2 (swiftlang-6.1.2.1.2 clang-1700.0.13.5)\nTarget: arm64-apple-macosx15.0",
+  "head": "b58ae3656f58a8b53acc0c98c4d130fe79863493",
+  "dirty": "M CHANGELOG.md\n M Sources/GitDesk/Actions.swift\n M Sources/GitDesk/DiffView.swift\n M Sources/GitDesk/HistoryActions.swift\n M Sources/GitDesk/LogTextExpansion.swift\n M Sources/GitDesk/RepositoryController.swift\n M Sources/GitDesk/Theme.swift\n M Sources/GitDeskCore/Diff.swift\n M Sources/GitDeskCore/GitRepository.swift\n M Tests/GitDeskCoreTests/main.swift\n M Tests/GitDeskUITests/FlowChecks.swift\n?? Sources/GitDesk/RepositoryHistoryPresentation.swift\n?? Tests/GitDeskCoreTests/PerformanceTests.swift\n?? docs/performance-report-2026-10-12.md\n?? docs/performance-testing.md\n?? output/\n?? scripts/performance/",
+  "source_sha256": "04372cfc18c1a20482b24098950a397c6db2006c48c917da2e0babc6d0a2db94",
+  "idea_version": "2026.2.3",
+  "idea_build": "262.10968.63",
+  "iterations": 20,
+  "fixtures": "/private/tmp/gitdesk-perf-v1",
+  "source_override": null,
+  "viewport": [
+    1440,
+    850
+  ],
+  "probe_sha256": "9d25751cdc896c85056e5f947a3fa56d27cba1a21f4095981b96e28dae8b3363",
+  "fixture_specs": {
+    "small": [
+      100,
+      20,
+      5,
+      0,
+      5,
+      0
+    ],
+    "medium": [
+      10000,
+      1000,
+      100,
+      0,
+      30,
+      0
+    ],
+    "history100k": [
+      100000,
+      100,
+      10,
+      0,
+      30,
+      0
+    ],
+    "dirty": [
+      1000,
+      10000,
+      2000,
+      10000,
+      30,
+      0
+    ],
+    "refs1000": [
+      10000,
+      100,
+      10,
+      0,
+      1000,
+      0
+    ],
+    "wide200": [
+      10000,
+      100,
+      10,
+      0,
+      200,
+      200
+    ]
+  },
+  "fixture_fingerprints": {
+    "small": "fc6566219509d95f839198645a435bb8e455e9b79a3906e6e5de64f297fb7d97",
+    "medium": "2dc56c4d6c3eb3da889f9ad3f5a654d0f281e975135266b1daa61771a1bb4dec",
+    "history100k": "bf6823a38a548a72c43110a265cbd52cce7d14bafe841f0a02065a1ee9ef32e9",
+    "dirty": "2b1330a5fe15bd4d39ab3a3e345490148f76f8c1ea031c9b0d8b4d422214332c",
+    "refs1000": "1543fb9e7466abf9341b0d6569a88e9ce8672a9f8cc0a64225a6c0b1a803c2d2",
+    "wide200": "42db5fd557be44cdf58855d0e411f28fa370459198450f650cc6e72f9de66659"
+  },
+  "modes": [
+    "core",
+    "ui",
+    "diff"
+  ]
+}
