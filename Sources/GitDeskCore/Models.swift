@@ -151,6 +151,11 @@ public struct GraphSegment {
   public let toY: Double
   public let color: Int
 }
+public struct GraphArrow {
+  public let lane: Int
+  public let color: Int
+  public let pointsDown: Bool
+}
 public struct GraphRow {
   public let lane: Int
   public let color: Int
@@ -159,6 +164,7 @@ public struct GraphRow {
   public let isMerge: Bool
   public let incoming: Bool
   public let incomingEdges: [GraphEdge]
+  public let arrows: [GraphArrow]
   // Coordinates are normalized to the row: bottom = 0, node = 0.5, top = 1.
   // Split center-to-center connections at the shared row boundary, so diagonal
   // edges join the node rather than turning half a row before reaching it.
@@ -173,11 +179,11 @@ public struct GraphRow {
   }
 }
 public enum CommitGraph {
-  public static func layout(_ commits: [Commit], ancestry: [Commit] = [], heads: [String] = []) -> [GraphRow] {
-    layout(commits, topology: ancestry.map { CommitAncestry(hash: $0.hash, parents: $0.parents) }, heads: heads)
+  public static func layout(_ commits: [Commit], ancestry: [Commit] = [], heads: [String] = [], showLongEdges: Bool = false) -> [GraphRow] {
+    layout(commits, topology: ancestry.map { CommitAncestry(hash: $0.hash, parents: $0.parents) }, heads: heads, showLongEdges: showLongEdges)
   }
 
-  public static func layout(_ commits: [Commit], topology: [CommitAncestry], heads: [String] = []) -> [GraphRow] {
+  public static func layout(_ commits: [Commit], topology: [CommitAncestry], heads: [String] = [], showLongEdges: Bool = false) -> [GraphRow] {
     guard !commits.isEmpty else { return [] }
     let visible = Set(commits.map(\.hash))
     // A detached revision or a newly loaded old branch can lie outside the
@@ -238,13 +244,26 @@ public enum CommitGraph {
     }
     let indices = Dictionary(commits.enumerated().map { ($0.element.hash, $0.offset) }, uniquingKeysWith: { a, _ in a })
     let parents = commits.map { projectedParents($0).compactMap { indices[$0] } }
+    // Match IDEA's compact print mode: edges spanning 30 rows keep only
+    // their first/last row, with arrows where the middle is omitted. Layout
+    // ranks stay unchanged; only the visible elements are packed again.
+    let longEdgeSize = showLongEdges ? 1000 : 30
+    let visiblePartSize = showLongEdges ? 250 : 1
+    func isVisible(_ edge: Connection, at row: Int) -> Bool {
+      edge.to - edge.from < longEdgeSize
+        || min(row - edge.from, edge.to - row) <= visiblePartSize
+    }
+    func edgeColor(_ edge: Connection) -> Int {
+      let owner = parents[edge.from].first == edge.to ? edge.from : edge.to
+      return ranks[commits[owner].hash] ?? 0
+    }
     var active: [Connection] = []
     var elements: [[Element]] = []
     var positions: [[Connection: Int]] = []
     var nodeLanes: [Int] = []
     for (index, commit) in commits.enumerated() {
       active.removeAll { $0.to <= index }
-      var row = active.map { edge in
+      var row = active.filter { isVisible($0, at: index) }.map { edge in
         Element(connection: edge,
           rank: max(ranks[commits[edge.from].hash] ?? 0, ranks[commits[edge.to].hash] ?? 0),
           origin: edge.from, destination: edge.to)
@@ -265,25 +284,37 @@ public enum CommitGraph {
     var previousEdges: [GraphEdge] = []
     return commits.indices.map { index in
       var edges: [GraphEdge] = []
+      var arrows: [GraphArrow] = []
+      for (position, element) in elements[index].enumerated() {
+        guard let edge = element.connection, edge.to - edge.from >= longEdgeSize else { continue }
+        if index - edge.from == visiblePartSize {
+          arrows.append(GraphArrow(lane: position, color: edgeColor(edge), pointsDown: true))
+        }
+        if edge.to - index == visiblePartSize {
+          arrows.append(GraphArrow(lane: position, color: edgeColor(edge), pointsDown: false))
+        }
+      }
+      // A page boundary (or shallow history) must not look like a root.
+      if parents[index].isEmpty && !commits[index].parents.isEmpty {
+        arrows.append(GraphArrow(lane: nodeLanes[index], color: ranks[commits[index].hash] ?? 0, pointsDown: true))
+      }
       if index + 1 < commits.count {
         for (position, element) in elements[index].enumerated() {
           let connections = element.connection.map { [$0] } ?? parents[index].filter { $0 > index }.map { Connection(from: index, to: $0) }
           for edge in connections {
             let destination = edge.to == index + 1 ? nodeLanes[index + 1] : positions[index + 1][edge]
             if let destination {
-              // A branch keeps its color all the way to the common ancestor.
-              // First-parent connections belong to the child; a merge's other
-              // connections belong to the branches being merged into it.
-              let owner = parents[edge.from].first == edge.to ? edge.from : edge.to
-              edges.append(GraphEdge(from: position, to: destination, color: ranks[commits[owner].hash] ?? 0))
+              edges.append(GraphEdge(from: position, to: destination, color: edgeColor(edge)))
             }
           }
         }
       }
+      // Include the top boundary of converging diagonals in the text inset.
+      let incomingWidth = previousEdges.map { ($0.from + $0.to + 1) / 2 + 1 }.max() ?? 0
       let row = GraphRow(lane: nodeLanes[index], color: ranks[commits[index].hash] ?? 0,
-        edges: edges, laneCount: max(elements[index].count, index + 1 < commits.count ? elements[index + 1].count : 0),
+        edges: edges, laneCount: max(incomingWidth, elements[index].count, index + 1 < commits.count ? elements[index + 1].count : 0),
         isMerge: commits[index].parents.count > 1,
-        incoming: previousEdges.contains { $0.to == nodeLanes[index] }, incomingEdges: previousEdges)
+        incoming: previousEdges.contains { $0.to == nodeLanes[index] }, incomingEdges: previousEdges, arrows: arrows)
       previousEdges = edges
       return row
     }

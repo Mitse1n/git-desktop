@@ -28,8 +28,8 @@ enum Theme {
   static let string = dynamic(.string)
   static let heading = dynamic(.heading)
   static let graph: [NSColor] = [
-    (0x3D8E9C, 0x167D8D), (0xA571E6, 0x8150BE), (0xC89056, 0xA36B24),
-    (0x77A66A, 0x337A3A), (0xC77DBB, 0xA33B8B), (0x669DF6, 0x315FBD),
+    (0x9F3C54, 0xA33D55), (0xA6753D, 0x95652F), (0x489C38, 0x39832D),
+    (0x7E47A6, 0x7B43A1), (0x4149A7, 0x4149A7), (0x2D9B85, 0x268773),
   ].enumerated().map { index, pair in
     NSColor(name: NSColor.Name("GitDesk.graph.\(index)")) { _ in
       NSColor(hex: current.isDark ? pair.0 : pair.1)
@@ -410,7 +410,6 @@ final class LogTable: MenuTable {
     }
   }
   var graphWidth: CGFloat = 44
-  var graphLaneCounts: [Int] = []
   var authorWidth: CGFloat = 90
   private(set) var hoveredRow = -1
   private var fitting = false
@@ -621,13 +620,7 @@ final class LogTable: MenuTable {
     guard !fitting, columnDrag == nil, tableColumns.count == 4,
       let width = enclosingScrollView?.contentSize.width, width > 0 else { return }
     fitting = true
-    let visible = rows(in: visibleRect)
-    var requiredGraphWidth = graphWidth
-    if visible.location != NSNotFound, visible.location < graphLaneCounts.count {
-      let end = min(graphLaneCounts.count, visible.location + visible.length)
-      let lanes = graphLaneCounts[visible.location..<end].max() ?? 0
-      requiredGraphWidth = max(graphWidth, CGFloat(lanes) * 15 + 8)
-    }
+    let requiredGraphWidth = graphWidth
     let author = tableColumns[2].isHidden ? 0 : resizedAuthorWidth ?? authorWidth
     let date = tableColumns[3].isHidden ? 0 : resizedDateWidth ?? 126
     let widths = [requiredGraphWidth, max(tableColumns[1].minWidth,
@@ -781,13 +774,23 @@ func menuItem(_ title: String, enabled: Bool = true, handler: @escaping () -> Vo
   return item
 }
 final class GraphCell: NSView {
+  static let laneSpacing: CGFloat = 18
+  static let leftInset: CGFloat = 16
+  static func requiredWidth(lanes: Int) -> CGFloat {
+    leftInset + CGFloat(max(0, lanes - 1)) * laneSpacing + 12
+  }
   var graph: GraphRow? { didSet { needsDisplay = true } }
   var isHead = false
   override func draw(_ dirtyRect: NSRect) {
     guard let graph else { return }
-    let h = bounds.height
+    NSGraphicsContext.saveGraphicsState()
+    bounds.clip()
+    Self.draw(graph, isHead: isHead, height: bounds.height)
+    NSGraphicsContext.restoreGraphicsState()
+  }
+  static func draw(_ graph: GraphRow, isHead: Bool, height h: CGFloat, offsetX: CGFloat = 0) {
     let middle = h / 2
-    func x(_ lane: Double) -> CGFloat { 16 + CGFloat(lane) * 15 }
+    func x(_ lane: Double) -> CGFloat { offsetX + leftInset + CGFloat(lane) * laneSpacing }
     for segment in graph.segments {
       let path = NSBezierPath()
       path.lineWidth = 1.6
@@ -795,6 +798,21 @@ final class GraphCell: NSView {
       path.line(to: NSPoint(x: x(segment.toLane), y: h * segment.toY))
       let color = Theme.graph[segment.color % Theme.graph.count]
       color.setStroke()
+      path.stroke()
+    }
+    for arrow in graph.arrows {
+      let center = NSPoint(x: x(Double(arrow.lane)), y: middle)
+      let direction: CGFloat = arrow.pointsDown ? -1 : 1
+      let tip = NSPoint(x: center.x, y: middle + direction * min(9, h * 0.36))
+      let path = NSBezierPath()
+      path.lineWidth = 1.6
+      path.lineJoinStyle = .round
+      path.move(to: center)
+      path.line(to: tip)
+      path.move(to: NSPoint(x: tip.x - 4, y: tip.y - direction * 6))
+      path.line(to: tip)
+      path.line(to: NSPoint(x: tip.x + 4, y: tip.y - direction * 6))
+      Theme.graph[arrow.color % Theme.graph.count].setStroke()
       path.stroke()
     }
     let color = Theme.graph[graph.color % Theme.graph.count]

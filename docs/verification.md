@@ -1,5 +1,15 @@
 # 调查与验证记录
 
+## 2026-10-13 IntelliJ 风格紧凑提交图
+
+- 对照用户提供的两张截图，以及 JetBrains 的 [PrintElementGeneratorImpl](https://github.com/JetBrains/intellij-community/blob/master/platform/vcs-log/graph/src/com/intellij/vcs/log/graph/impl/print/PrintElementGeneratorImpl.kt) 所描述的长边显示规则，用 Swift 实现按可见行数折叠长边：默认阈值为 30 行，两端各保留一行并显示方向箭头；开启 Long Edges 时阈值为 1000 行、两端各保留 250 行。
+- 隐藏中间长边后重新排列可见轨道，保留祖先排序和分支点线颜色关系；分页末尾的未加载父提交显示继续箭头。轨道间距改为 18pt，使用接近参考截图的低饱和配色，并非逐个分支的 IntelliJ 颜色哈希复刻。
+- Graph 列保留推荐基础宽度，较宽行的连线继续绘制到说明单元格，该行说明与悬浮区域单独缩进；滚动不再因某行过宽而移动所有标题。计算文字缩进时计入汇合斜线的上边界。
+- Long Edges 位于 Log 的眼睛菜单中，偏好持久保存；切换时后台准备图数据，保留多选与滚动位置。打开仓库、刷新、筛选、分页和跳转使用同一偏好。
+- `./scripts/test.sh`：**48 scenarios, 0 failures**，全部 AppKit UI 检查通过。新增阈值边界、两端箭头、筛选后的长度、分页继续箭头、几何边界、逐行说明/悬浮区域与异步切换多选/滚动位置检查。Release 打包与严格签名验证通过。截图来自自动构造的合并历史和实际 LogTable / GraphCell / LogSubjectCell 渲染，并已目视检查；未对用户截图中的真实仓库执行界面操作。
+
+![紧凑提交图的实际 AppKit 表格渲染](gitdesk-graph-compact.png)
+
 ## 2026-10-11 旧分支筛选的提交图
 
 - 对照 IDEA 和 GitDesk 中同一个 `origin/cloud` 的 37 条历史。最近 2000 条全局日志与这 37 条提交没有交集，旧算法因此没有为可见提交分配祖先排序，所有点线退回同一颜色，主线在左右轨道间反复交叉。
