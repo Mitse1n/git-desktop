@@ -17,7 +17,6 @@ final class BranchOutline: MenuOutline, ThemeUpdating {
   private(set) var hoveredRow = -1
   private(set) var expansionView: BranchExpansionView?
   private weak var expansionSource: BranchCell?
-  private var sourceToolTip: String?
   private var hoverTrackingArea: NSTrackingArea?
   private var observers: [NSObjectProtocol] = []
   private var fitting = false
@@ -131,8 +130,12 @@ final class BranchOutline: MenuOutline, ThemeUpdating {
       return
     }
     if expansionSource === cell { return }
-    let available = content.convert(window.contentLayoutRect, from: nil)
+    var available = content.convert(window.contentLayoutRect, from: nil)
       .intersection(content.bounds).insetBy(dx: 2, dy: 2)
+    // Expand toward the left, keeping the commit graph on the other side of the
+    // branch viewport unobscured. The window still bounds very long names.
+    let viewport = content.convert(visibleRect, from: self)
+    available.size.width = max(0, min(available.maxX, viewport.maxX) - available.minX)
     let anchor = content.convert(title, from: self)
     guard let layout = LogTextExpansionLayout.make(text: field.stringValue,
       font: field.font ?? Theme.font, sourceRect: anchor, containerBounds: available,
@@ -144,8 +147,8 @@ final class BranchOutline: MenuOutline, ThemeUpdating {
     let expanded = BranchExpansionView(layout: layout, rowRect: rowRect,
       textColor: field.textColor ?? Theme.text, fillColor: fill)
     expansionSource = cell
-    sourceToolTip = cell.toolTip
-    cell.toolTip = nil
+    // The name expansion and delayed branch/upstream tooltip are independent.
+    // Keep the native tooltip registered while the click-through overlay is up.
     expansionView = expanded
     content.addSubview(expanded, positioned: .above, relativeTo: nil)
     if cell.branchIcon.image != nil {
@@ -158,8 +161,6 @@ final class BranchOutline: MenuOutline, ThemeUpdating {
     }
   }
   func dismissTextExpansion() {
-    expansionSource?.toolTip = sourceToolTip
-    sourceToolTip = nil
     expansionSource = nil
     expansionView?.removeFromSuperview()
     expansionView = nil
@@ -215,7 +216,7 @@ final class BranchOutline: MenuOutline, ThemeUpdating {
   }
 }
 
-/// Draw the expanded name over neighboring panes, retaining the original row's icon and fill.
+/// Draw the expanded name to the left of the branch pane's trailing edge.
 final class BranchExpansionView: NSView {
   let textLayout: LogTextExpansionLayout
   let textColor: NSColor
