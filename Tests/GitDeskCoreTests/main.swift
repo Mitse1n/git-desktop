@@ -90,6 +90,7 @@ let cases: [(String, (GitRepositoryTests) throws -> Void)] = [
   ("Merge commit and untracked files", { try $0.testMergeCommitKeepsParentsAndUntrackedFiles() }),
   ("Rebase, worktree and annotated tag", { try $0.testRebaseWorktreeAndAnnotatedTag() }),
   ("Cherry-pick, revert and reset", { try $0.testCherryPickRevertAndReset() }),
+  ("Rollback preserves added files", { try $0.testRollbackPreservesAddedFiles() }),
   ("Discard and unstage", { try $0.testDiscardAndUnstage() }),
 ]
 for (name, body) in cases {

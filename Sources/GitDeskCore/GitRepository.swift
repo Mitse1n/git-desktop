@@ -408,6 +408,12 @@ public final class GitRepository {
     guard !changes.contains(where: \.isUntracked) else {
       throw GitFailure("Unversioned files cannot be rolled back. Use Move to Trash instead.")
     }
-    try run(["restore", "--source=HEAD", "--staged", "--worktree", "--"] + paths(changes))
+    // IDEA rolls newly added files back to unversioned files, retaining their contents.
+    let added = changes.filter { $0.index == "A" || $0.index == "C" }
+    let existing = changes.filter { $0.index != "A" && $0.index != "C" }
+    if !existing.isEmpty {
+      try run(["restore", "--source=HEAD", "--staged", "--worktree", "--"] + paths(existing))
+    }
+    if !added.isEmpty { try run(["rm", "--cached", "-f", "--"] + added.map(\.path)) }
   }
 }
