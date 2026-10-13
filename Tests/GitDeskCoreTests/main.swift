@@ -87,6 +87,7 @@ let cases: [(String, (GitRepositoryTests) throws -> Void)] = [
   ("Stash and restore", { try $0.testStashAndRestore() }),
   ("Push targets and upstream preservation", { try $0.testPushTargetsAndUpstreamPreservation() }),
   ("Push, fetch and pull via local remote", { try $0.testLocalRemotePushFetchPull() }),
+  ("Deleted and empty conflict sides", { try $0.testDeletedAndEmptyConflictSides() }),
   ("Conflicts and abort", { try $0.testConflictDetectionStagesAndAbort() }),
   ("Merge commit and untracked files", { try $0.testMergeCommitKeepsParentsAndUntrackedFiles() }),
   ("Rebase, worktree and annotated tag", { try $0.testRebaseWorktreeAndAnnotatedTag() }),

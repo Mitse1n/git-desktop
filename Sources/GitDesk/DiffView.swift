@@ -450,7 +450,7 @@ final class DiffWindowController: NSWindowController, NSWindowDelegate {
   func windowWillClose(_ notification: Notification) { onClose?() }
 }
 
-final class ConflictWindowController: NSWindowController, NSWindowDelegate {
+final class ConflictWindowController: NSWindowController, NSWindowDelegate, NSTextViewDelegate {
   let result = NSTextView()
   let repository: GitRepository
   let file: FileChange
@@ -459,6 +459,9 @@ final class ConflictWindowController: NSWindowController, NSWindowDelegate {
   var binaryConflict = false
   var isLoaded = false
   var sideContents: [Int: String] = [:]
+  var deletedSides = Set<Int>()
+  var selectedSide: Int?
+  let queue = DispatchQueue(label: "gitdesk.conflict", qos: .userInitiated)
   init(repository: GitRepository, file: FileChange) {
     self.repository = repository
     self.file = file
@@ -484,16 +487,19 @@ final class ConflictWindowController: NSWindowController, NSWindowDelegate {
     sides.dividerStyle = .thin
     let ours = NSTextView()
     let theirs = NSTextView()
-    for (text, title) in [(ours, "Ours"), (theirs, "Theirs")] {
+    let oursTitle = label("Ours", bold: true)
+    let theirsTitle = label("Theirs", bold: true)
+    for (text, title) in [(ours, oursTitle), (theirs, theirsTitle)] {
       text.isEditable = false
       text.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
       text.textColor = Theme.text
       text.backgroundColor = Theme.background
       text.textContainerInset = NSSize(width: 10, height: 10)
       sides.addArrangedSubview(
-        makePanel(label(title, bold: true), body: scrollView(text), height: 28))
+        makePanel(title, body: scrollView(text), height: 28))
     }
     result.isRichText = false
+    result.delegate = self
     result.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
     result.textColor = Theme.text
     result.backgroundColor = Theme.background
@@ -512,14 +518,17 @@ final class ConflictWindowController: NSWindowController, NSWindowDelegate {
     vertical.setPosition(vertical.bounds.height * 0.45, ofDividerAt: 0)
     sides.setPosition(sides.bounds.width * 0.5, ofDividerAt: 0)
     result.string = "Loading conflict…"
-    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+    queue.async { [weak self] in
       do {
-        let a = try repository.blob(ref: ":2", path: file.path, limit: 2_000_000)
-        let b = try repository.blob(ref: ":3", path: file.path, limit: 2_000_000)
+        let a = try repository.conflictContents(file, side: .ours)
+        let b = try repository.conflictContents(file, side: .theirs)
         let current = try repository.readWorkingFile(file.path)
         DispatchQueue.main.async {
           self?.isLoaded = true
-          let data = [a, b, current]
+          self?.deletedSides = Set([(2, a), (3, b)].compactMap { $0.1 == nil ? $0.0 : nil })
+          oursTitle.stringValue = a == nil ? "Ours (deleted)" : "Ours"
+          theirsTitle.stringValue = b == nil ? "Theirs (deleted)" : "Theirs"
+          let data = [a, b, current].compactMap { $0 }
           if data.contains(where: { $0.contains(0) || String(data: $0, encoding: .utf8) == nil }) {
             self?.binaryConflict = true
             self?.result.isEditable = false
@@ -527,8 +536,8 @@ final class ConflictWindowController: NSWindowController, NSWindowDelegate {
               "Binary conflict. Use Accept Ours / Accept Theirs in the Local Changes context menu."
             return
           }
-          ours.string = String(decoding: a, as: UTF8.self)
-          theirs.string = String(decoding: b, as: UTF8.self)
+          ours.string = String(decoding: a ?? Data(), as: UTF8.self)
+          theirs.string = String(decoding: b ?? Data(), as: UTF8.self)
           self?.sideContents = [2: ours.string, 3: theirs.string]
           self?.result.string = String(decoding: current, as: UTF8.self)
         }
@@ -540,6 +549,11 @@ final class ConflictWindowController: NSWindowController, NSWindowDelegate {
   func useSide(_ side: Int) {
     guard isLoaded, !binaryConflict else { return }
     result.string = sideContents[side] ?? ""
+    selectedSide = side
+  }
+  func textDidChange(_ notification: Notification) {
+    // Editing after accepting a deleted side explicitly creates a new result.
+    selectedSide = nil
   }
   func save() {
     guard isLoaded, !binaryConflict else { return }
@@ -553,13 +567,12 @@ final class ConflictWindowController: NSWindowController, NSWindowDelegate {
       return
     }
     let content = result.string
-    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+    let deletion = selectedSide.flatMap { deletedSides.contains($0) ? ConflictSide(rawValue: $0) : nil }
+    queue.async { [weak self] in
       guard let self else { return }
       do {
-        try Data(content.utf8).write(
-          to: self.repository.workingDirectory.appendingPathComponent(self.file.path),
-          options: .atomic)
-        try self.repository.stage([self.file])
+        if let deletion { try self.repository.acceptConflicts([self.file], side: deletion) }
+        else { try self.repository.saveConflict(self.file, contents: Data(content.utf8)) }
         DispatchQueue.main.async {
           self.onResolve?()
           self.close()

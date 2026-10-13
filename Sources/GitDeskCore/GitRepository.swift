@@ -25,7 +25,7 @@ public final class GitRepository {
   ) throws -> Data {
     let task = Process()
     task.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-    let pathCommands = ["add", "reset", "restore", "rm", "diff", "diff-tree", "log", "checkout"]
+    let pathCommands = ["add", "reset", "restore", "rm", "diff", "diff-tree", "log", "checkout", "ls-files"]
     let literal = pathCommands.contains(args.first ?? "") && args.contains("--")
     task.arguments =
       (literal ? ["--literal-pathspecs"] : []) + [

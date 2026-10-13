@@ -339,3 +339,71 @@ resizeTable.reloadKeepingSelection()
 precondition(resizeTable.selectedRowIndexes == IndexSet([0, 1]),
   "Changing Log appearance must retain every selected commit")
 print("Log appearance refresh preserves multiple selected commits")
+
+// Exercise the actual conflict editor: deleted sides and empty files must differ.
+do {
+  let directory = FileManager.default.temporaryDirectory.appendingPathComponent("gitdesk-conflict-ui-" + UUID().uuidString)
+  try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: directory) }
+  for scenario in ["delete-ours", "delete-theirs", "empty-file", "edited-result"] {
+    let root = directory.appendingPathComponent(scenario)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let repo = GitRepository(directory: root)
+    try repo.run(["init", "-b", "main"])
+    try repo.run(["config", "user.name", "Conflict Test"])
+    try repo.run(["config", "user.email", "conflict@example.test"])
+    try repo.run(["config", "commit.gpgsign", "false"])
+    try repo.run(["config", "core.hooksPath", "/dev/null"])
+    let path = "file [literal].txt"
+    let url = root.appendingPathComponent(path)
+    try Data("base\n".utf8).write(to: url)
+    try repo.run(["add", "--", path]); try repo.run(["commit", "-m", "Base"])
+    try repo.run(["switch", "-c", "modified"])
+    try Data((scenario == "empty-file" ? "" : "modified\n").utf8).write(to: url)
+    try repo.run(["commit", "-am", "Modify"])
+    try repo.run(["switch", "main"])
+    if scenario == "empty-file" {
+      try Data("other content\n".utf8).write(to: url)
+      try repo.run(["commit", "-am", "Modify differently"])
+    } else {
+      try repo.run(["rm", "--", path]); try repo.run(["commit", "-m", "Delete"])
+    }
+    if scenario == "delete-theirs" { try repo.run(["switch", "modified"]) }
+    try repo.run(["merge", "--no-edit", scenario == "delete-theirs" ? "main" : "modified"], allowFailure: true)
+    let file = try repo.status().first(where: \.isConflicted)!
+    let controller = ConflictWindowController(repository: repo, file: file)
+    func waitUntil(_ condition: () -> Bool) {
+      let deadline = Date().addingTimeInterval(15)
+      while !condition() && Date() < deadline {
+        RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+      }
+      precondition(condition(), "Conflict editor timed out: " + scenario)
+    }
+    waitUntil { controller.isLoaded }
+    precondition(!controller.binaryConflict)
+    controller.useSide(scenario == "delete-theirs" || scenario == "empty-file" ? 3 : 2)
+    if scenario == "edited-result" {
+      controller.result.string = "manual resolution\n"
+      controller.textDidChange(Notification(name: NSText.didChangeNotification))
+    }
+    var resolved = false
+    controller.onResolve = { resolved = true }
+    controller.save()
+    waitUntil { resolved }
+    let retainsFile = scenario == "empty-file" || scenario == "edited-result"
+    precondition(FileManager.default.fileExists(atPath: url.path) == retainsFile)
+    let status = try repo.status()
+    precondition(status.allSatisfy { !$0.isConflicted })
+    if retainsFile {
+      let contents = try Data(contentsOf: url)
+      precondition(contents == Data((scenario == "empty-file" ? "" : "manual resolution\n").utf8))
+    } else {
+      let tracked = try repo.run(["ls-files", "-z", "--", path])
+      precondition(tracked.isEmpty)
+    }
+  }
+  print("Conflict editor: deleted ours/theirs, real empty files and editing after side selection passed")
+} catch {
+  print("FAIL Conflict editor: " + error.localizedDescription)
+  exit(1)
+}

@@ -702,8 +702,7 @@ extension RepositoryController {
     perform(
       "Resolve conflicts",
       work: {
-        try $0.run(["checkout", "--" + side, "--"] + files.map(\.path))
-        try $0.stage(files)
+        try $0.acceptConflicts(files, side: side == "ours" ? .ours : .theirs)
       })
   }
   func resolveConflicts() {
