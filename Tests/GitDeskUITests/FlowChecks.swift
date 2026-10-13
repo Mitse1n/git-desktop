@@ -214,6 +214,73 @@ func runFlowChecks() throws {
   } == graphBeforePreparation && controller.currentBranchHistory == reachabilityBeforePreparation,
     "Background preparation preserves graph coordinates, colors and HEAD ancestry")
 
+  let savedHighlight = controller.highlightCurrentBranch
+  let savedBranchFilter = controller.filter.branch
+  let highlightSelection = controller.logTable.selectedRowIndexes
+  controller.highlightCurrentBranch = true
+  func checkBranchHighlight(_ branch: String?, expected: Bool, _ message: String) {
+    controller.filter.branch = branch
+    controller.reloadLogAppearance()
+    let row = controller.tableView(controller.logTable, rowViewForRow: 0) as! SelectionRow
+    check(controller.shouldHighlightCurrentBranch == expected
+      && (row.backgroundTint != nil) == expected, message)
+    check(controller.logTable.selectedRowIndexes == highlightSelection,
+      "Changing branch highlighting preserves the selected commits")
+  }
+  checkBranchHighlight(nil, expected: true, "All branches retain current-branch highlighting")
+  checkBranchHighlight("main", expected: false, "Filtering by the current short branch name suppresses highlighting")
+  checkBranchHighlight("refs/heads/main", expected: false,
+    "Filtering by the current full branch ref suppresses highlighting")
+  checkBranchHighlight("HEAD", expected: false, "HEAD filtering suppresses highlighting")
+  checkBranchHighlight("refs/heads/feature/older", expected: true,
+    "Another branch filter retains current-branch highlighting")
+  checkBranchHighlight("refs/remotes/origin/main", expected: true,
+    "A remote branch with the same short name is not the checked-out local branch")
+  try repo.run(["branch", "highlight-same-tip", "main"])
+  checkBranchHighlight("refs/heads/highlight-same-tip", expected: true,
+    "Another branch at the same commit does not suppress highlighting")
+  try repo.run(["branch", "-D", "highlight-same-tip"])
+  controller.filter.branch = nil
+  let highlightSnapshot = controller.snapshot
+  try repo.run(["checkout", "feature/older"])
+  controller.snapshot = try repo.snapshot()
+  controller.filter.branch = "refs/heads/main"
+  check(controller.shouldHighlightCurrentBranch,
+    "Changing the checked-out branch re-evaluates the filter suppression rule")
+  try repo.run(["checkout", "--detach"])
+  controller.snapshot = try repo.snapshot()
+  controller.filter.branch = nil
+  check(!controller.shouldHighlightCurrentBranch, "Detached HEAD has no current-branch background")
+  try repo.run(["checkout", "main"])
+  controller.snapshot = highlightSnapshot
+  controller.highlightCurrentBranch = false
+  check(!controller.shouldHighlightCurrentBranch, "Disabling the highlight option suppresses its background")
+  for theme in AppTheme.allCases {
+    check(theme.color(.currentBranchBackground) != theme.color(.activeSelection),
+      "Current-branch and selected-row colors are distinct in \(theme.title)")
+  }
+  controller.highlightCurrentBranch = true
+  controller.filter.branch = nil
+  controller.reloadLogAppearance()
+  let unchangedHighlightSnapshot = controller.snapshot
+  controller.filter.branch = "refs/heads/main"
+  controller.refresh(logOnly: true)
+  drain(controller.queue)
+  check(controller.snapshot == unchangedHighlightSnapshot
+    && !controller.displayedCurrentBranchHighlight
+    && (controller.logTable.rowView(atRow: 0, makeIfNecessary: true) as? SelectionRow)?.backgroundTint == nil,
+    "All to current-branch filtering clears existing row backgrounds even when commit data is unchanged")
+  controller.filter.branch = nil
+  controller.refresh(logOnly: true)
+  drain(controller.queue)
+  check(controller.displayedCurrentBranchHighlight
+    && (controller.logTable.rowView(atRow: 0, makeIfNecessary: true) as? SelectionRow)?.backgroundTint != nil,
+    "Returning to All restores current-branch backgrounds without changing commit data")
+  controller.highlightCurrentBranch = savedHighlight
+  controller.filter.branch = savedBranchFilter
+  controller.reloadLogAppearance()
+  drain(controller.queue)
+  print("Current branch highlight: all/current/HEAD/other/same-tip/remote filters, checkout, detached HEAD, themes and selection preservation passed")
 
   check(controller.branchHeadButton?.isEnabled == false,
     "Branch-head navigation stays disabled without a branch selection")
@@ -239,6 +306,35 @@ func runFlowChecks() throws {
   controller.branchFavoriteButton?.handler?()
   check(controller.favoriteRefs.contains(olderBranch.fullRef) == wasFavorite,
     "The branch star can unmark the same favorite")
+
+  func pressFileSpace(repeatKey: Bool = false, modifiers: NSEvent.ModifierFlags = []) {
+    let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers,
+      timestamp: 0, windowNumber: 0, context: nil, characters: " ",
+      charactersIgnoringModifiers: " ", isARepeat: repeatKey, keyCode: 49)!
+    controller.filesTable.keyDown(with: event)
+  }
+  controller.filesTable.deselectAll(nil)
+  pressFileSpace()
+  check(controller.diffWindows.isEmpty, "Space without a file selection does not open Diff")
+  let previewRow = (0..<controller.filesTable.numberOfRows).first {
+    (controller.filesTable.item(atRow: $0) as? FileNode)?.file?.path == "space.txt"
+  }!
+  controller.filesTable.selectRowIndexes(IndexSet(integer: previewRow), byExtendingSelection: false)
+  let previewSelection = controller.filesTable.selectedRowIndexes
+  pressFileSpace(repeatKey: true)
+  pressFileSpace(modifiers: .shift)
+  check(controller.diffWindows.isEmpty, "Repeated or modified Space does not open a preview")
+  pressFileSpace()
+  check(controller.diffWindows.count == 1, "Space opens one Diff window for the selected file")
+  if let preview = controller.diffWindows.first {
+    drain(preview.controller.queue)
+    check(preview.files[preview.index].path == "space.txt" && preview.commit?.hash == branchHead,
+      "Space preview uses the selected historical file and commit, as double-click does")
+    preview.close()
+  }
+  check(controller.filesTable.selectedRowIndexes == previewSelection,
+    "Space preview preserves file selection")
+  print("File preview: Space opens selected historical Diff, preserves selection, and ignores empty/repeated/modified requests")
 
   // A filtered-out selection must also invalidate already queued detail reads.
   let detailsGate = DispatchSemaphore(value: 0)
@@ -284,6 +380,33 @@ func runFlowChecks() throws {
   controller.split.setPosition(320, ofDividerAt: 0)
   controller.split.setPosition(850, ofDividerAt: 1)
   controller.view.layoutSubtreeIfNeeded()
+  let metadataSelection = controller.logTable.selectedRowIndexes
+  for column in [2, 3] {
+    let table = controller.logTable
+    let cell = table.view(atColumn: column, row: 0, makeIfNecessary: true) as! LogMetadataCell
+    let original = cell.textField!.stringValue
+    cell.textField!.stringValue = column == 2 ? "Alex Christopher Longname" : "2026/10/12 09:41:32 +08:00"
+    cell.layoutSubtreeIfNeeded()
+    let text = cell.hoverText!
+    check(cell.hitTest(NSPoint(x: cell.frame.midX, y: cell.frame.midY)) == nil,
+      "Metadata labels pass pointer events to the log table")
+    let point = cell.convert(NSPoint(x: text.rect.midX, y: cell.bounds.minY + 1), to: nil)
+    let event = NSEvent.mouseEvent(with: .mouseMoved, location: point, modifierFlags: [],
+      timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 0,
+      clickCount: 0, pressure: 0)!
+    table.mouseMoved(with: event)
+    check(window.contentView!.subviews.contains { $0 is LogTextExpansionView },
+      "Truncated metadata column \(column) expands on hover")
+    check(table.selectedRowIndexes == metadataSelection, "Metadata hover preserves commit selection")
+    table.mouseExited(with: event)
+    check(!window.contentView!.subviews.contains { $0 is LogTextExpansionView },
+      "Leaving metadata dismisses its expansion")
+    cell.textField!.stringValue = "T"
+    table.mouseMoved(with: event)
+    check(!window.contentView!.subviews.contains { $0 is LogTextExpansionView },
+      "Unclipped metadata does not expand")
+    cell.textField!.stringValue = original
+  }
   let outline = controller.branchOutline
   outline.fitContentWidth()
   let branchScroll = outline.enclosingScrollView!

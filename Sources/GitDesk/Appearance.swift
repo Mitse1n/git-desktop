@@ -24,7 +24,8 @@ enum AppTheme: String, CaseIterable {
     let dark: [ThemeColor: UInt32] = [
       .background: 0x1E1F22, .chrome: 0x2B2D30, .line: 0x393B40,
       .border: 0x43454A, .text: 0xDFE1E5, .muted: 0x868A91,
-      .selection: 0x25324D, .activeSelection: 0x2E436E, .inactiveSelection: 0x43454A,
+      .selection: 0x25324D, .currentBranchBackground: 0x283044,
+      .activeSelection: 0x2E436E, .inactiveSelection: 0x43454A,
       .blue: 0x6B9BFA, .green: 0x89CC8E, .red: 0xE37774, .yellow: 0xF2C55C,
       .accent: 0x3574F0, .pressedAccent: 0x315FBC,
       .diffRemoved: 0x422D30, .diffAdded: 0x2D4435, .diffModified: 0x2D3E52,
@@ -33,7 +34,8 @@ enum AppTheme: String, CaseIterable {
     let light: [ThemeColor: UInt32] = [
       .background: 0xFFFFFF, .chrome: 0xF7F8FA, .line: 0xDFE1E5,
       .border: 0xC9CCD6, .text: 0x27282E, .muted: 0x6C707E,
-      .selection: 0xEDF3FF, .activeSelection: 0xD4E2FF, .inactiveSelection: 0xEBECF0,
+      .selection: 0xEDF3FF, .currentBranchBackground: 0xEDF3FF,
+      .activeSelection: 0xD4E2FF, .inactiveSelection: 0xEBECF0,
       .blue: 0x315FBD, .green: 0x1F7536, .red: 0xBC303E, .yellow: 0xA46704,
       .accent: 0x3574F0, .pressedAccent: 0x2E55A3,
       .diffRemoved: 0xFCE6E6, .diffAdded: 0xE1F2DF, .diffModified: 0xDFEAFB,
@@ -41,6 +43,7 @@ enum AppTheme: String, CaseIterable {
     ]
     var palette = isDark ? dark : light
     if isIsland {
+      palette[.currentBranchBackground] = isDark ? 0x1D2336 : 0xEDF3FF
       palette[.chrome] = isDark ? 0x26282C : 0xE9EAEE
       palette[.background] = isDark ? 0x191A1C : 0xFFFFFF
       palette[.line] = isDark ? 0x26282C : 0xE9EAEE
@@ -63,6 +66,7 @@ enum AppTheme: String, CaseIterable {
 
 enum ThemeColor: String {
   case background, chrome, line, border, text, muted, selection, activeSelection, inactiveSelection
+  case currentBranchBackground
   case hover, blue, green, red, yellow, accent, pressedAccent
   case diffRemoved, diffAdded, diffModified, diffGap, keyword, string, heading
 }

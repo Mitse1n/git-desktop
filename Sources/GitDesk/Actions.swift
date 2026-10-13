@@ -752,6 +752,7 @@ extension RepositoryController {
     return item
   }
   func reloadLogAppearance() {
+    displayedCurrentBranchHighlight = shouldHighlightCurrentBranch
     logTable.reloadKeepingSelection()
   }
   func logViewOptions(anchor: NSView? = nil) {

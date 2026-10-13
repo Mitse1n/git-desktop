@@ -101,6 +101,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
   var allAuthors = Set<String>()
   var graphs: [GraphRow] = []
   var currentBranchHistory = Set<String>()
+  var displayedCurrentBranchHighlight = false
   var highlightCurrentBranch = UserDefaults.standard.object(forKey: "logHighlightCurrentBranch") as? Bool ?? true {
     didSet { UserDefaults.standard.set(highlightCurrentBranch, forKey: "logHighlightCurrentBranch") }
   }
@@ -580,6 +581,10 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     filesTable.indentationPerLevel = 13
     filesTable.target = self
     filesTable.doubleAction = #selector(showDiff)
+    filesTable.previewSelection = { [weak self] in
+      guard let self, !self.selectedDetailFiles.isEmpty else { return }
+      self.showDiff()
+    }
     filesTable.setAccessibilityLabel("Commit changes")
     filesTable.menuProvider = { [weak self] in self?.fileContextMenu(working: false) ?? NSMenu() }
     filesTable.toggleGrouping = { [weak self] directory in
@@ -591,7 +596,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     detailOptions.handler = { [weak self, weak detailOptions] in self?.detailsOptions(anchor: detailOptions) }
     let fileBar = row(
       [
-        ActionButton(symbol: "arrow.left.arrow.right", tooltip: "Show Diff (⌘D)") { [weak self] in
+        ActionButton(symbol: "arrow.left.arrow.right", tooltip: "Show Diff (⌘D / Space)") { [weak self] in
           self?.showDiff()
         },
         ActionButton(symbol: "arrow.uturn.backward", tooltip: "Revert Commit") { [weak self] in
@@ -837,6 +842,11 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
             } else {
               self.updateStatus()
             }
+            // A branch filter can change highlight policy without changing any
+            // commit rows (for example All -> main). Refresh only appearance.
+            if self.displayedCurrentBranchHighlight != self.shouldHighlightCurrentBranch {
+              self.reloadLogAppearance()
+            }
           }
           if self.pendingRefresh {
             let logOnly = self.pendingRefreshLogOnly
@@ -922,6 +932,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     logTable.fitColumns()
     rebuildingLog = true
     displayedLogCommits = data.commits
+    displayedCurrentBranchHighlight = shouldHighlightCurrentBranch
     logTable.reloadData()
     rebuildBranches()
     let hashes = selectedHashes.isEmpty ? Set(selectedHash.map { [$0] } ?? []) : selectedHashes
@@ -1072,15 +1083,24 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
       ? snapshot?.commits.count ?? 0
       : tableView == changesTable ? workingRows.count : detailFiles.count
   }
+  var shouldHighlightCurrentBranch: Bool {
+    guard highlightCurrentBranch, let branch = snapshot?.currentBranch,
+      branch != "Detached HEAD" else { return false }
+    // IDEA suppresses this redundant background when the log is already
+    // restricted to the checked-out branch or HEAD. Compare ref names, not
+    // hashes: another branch/tag can point at the same commit.
+    return filter.branch != "HEAD" && filter.branch != branch
+      && filter.branch != "refs/heads/" + branch
+  }
   func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
     let view = SelectionRow()
     if tableView == logTable { view.isHovered = row == logTable.hoveredRow }
     view.usesInactiveColor = tableView != logTable && tableView != changesTable
     if tableView == changesTable { view.cornerRadius = 3 }
-    if tableView == logTable, highlightCurrentBranch,
+    if tableView == logTable, shouldHighlightCurrentBranch,
       let commits = snapshot?.commits, row < commits.count,
       currentBranchHistory.contains(commits[row].hash) {
-      view.backgroundTint = Theme.selection
+      view.backgroundTint = Theme.currentBranchBackground
     }
     return view
   }
@@ -1326,6 +1346,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
   }
   func outlineView(_ outlineView: NSOutlineView, rowViewForItem item: Any) -> NSTableRowView? {
     let row = SelectionRow()
+    row.usesHoverShapeForSelection = outlineView === branchOutline || outlineView === filesTable
     if outlineView === branchOutline {
       row.hoverColor = Theme.inactiveSelection
       row.isHovered = branchOutline.row(forItem: item) == branchOutline.hoveredRow

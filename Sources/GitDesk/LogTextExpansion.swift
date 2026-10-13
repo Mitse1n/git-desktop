@@ -19,11 +19,14 @@ protocol LogExpandableCell: AnyObject {
 }
 
 final class LogMetadataCell: NSTableCellView, LogExpandableCell {
+  // Metadata is read-only; let the table handle pointer events over its label too.
+  override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
   var hoverText: LogHoverText? {
     guard let field = textField, let cell = field.cell else { return nil }
     return LogHoverText(text: field.stringValue, font: field.font ?? .systemFont(ofSize: 13),
       color: field.textColor ?? .labelColor,
-      rect: convert(cell.drawingRect(forBounds: field.bounds), from: field))
+      rect: convert(cell.drawingRect(forBounds: field.bounds), from: field).intersection(bounds))
   }
 }
 

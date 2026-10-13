@@ -10,6 +10,7 @@ enum Theme {
   static let text = dynamic(.text)
   static let muted = dynamic(.muted)
   static let selection = dynamic(.selection)
+  static let currentBranchBackground = dynamic(.currentBranchBackground)
   static let activeSelection = dynamic(.activeSelection)
   static let inactiveSelection = dynamic(.inactiveSelection)
   static let hover = dynamic(.hover)
@@ -514,11 +515,12 @@ final class LogTable: MenuTable {
   }
   private func updateTextExpansion(at point: NSPoint) {
     let column = column(at: point)
-    guard hoveredRow >= 0, column >= 0, let window, window.isKeyWindow,
+    guard hoveredRow >= 0, column >= 0, let window, window.isVisible,
       let content = window.contentView,
       let cell = view(atColumn: column, row: hoveredRow, makeIfNecessary: false),
       let text = (cell as? LogExpandableCell)?.hoverText,
-      text.rect.contains(cell.convert(point, from: self)) else {
+      (cell is LogMetadataCell ? cell.bounds : text.rect)
+        .contains(cell.convert(point, from: self)) else {
       dismissTextExpansion()
       return
     }
@@ -705,7 +707,13 @@ final class FilterPopup: NSPopUpButton {
 class MenuOutline: NSOutlineView {
   var menuProvider: (() -> NSMenu)?
   var toggleGrouping: ((Bool) -> Void)?
+  var previewSelection: (() -> Void)?
   override func keyDown(with event: NSEvent) {
+    if let previewSelection, event.charactersIgnoringModifiers == " ",
+      event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty {
+      if !event.isARepeat { previewSelection() }
+      return
+    }
     if let toggleGrouping,
       event.modifierFlags.intersection([.command, .control, .option, .shift]) == .control,
       event.charactersIgnoringModifiers == "p" || event.charactersIgnoringModifiers == "m" {
@@ -723,22 +731,28 @@ class MenuOutline: NSOutlineView {
 final class SelectionRow: NSTableRowView {
   var usesInactiveColor = true
   var cornerRadius: CGFloat = 0
+  var usesHoverShapeForSelection = false
   var backgroundTint: NSColor?
   var hoverColor = Theme.hover
   var isHovered = false { didSet { if oldValue != isHovered { needsDisplay = true } } }
+  private var hoverShape: NSBezierPath {
+    NSBezierPath(roundedRect: visibleRect.insetBy(dx: 4, dy: 0), xRadius: 4, yRadius: 4)
+  }
   override func drawBackground(in dirtyRect: NSRect) {
-    if let backgroundTint {
+    if let backgroundTint, !isSelected {
       backgroundTint.setFill()
       bounds.fill()
     } else { super.drawBackground(in: dirtyRect) }
     if isHovered && !isSelected {
       hoverColor.setFill()
-      NSBezierPath(roundedRect: visibleRect.insetBy(dx: 4, dy: 0), xRadius: 4, yRadius: 4).fill()
+      hoverShape.fill()
     }
   }
   override func drawSelection(in dirtyRect: NSRect) {
     (isEmphasized || !usesInactiveColor ? Theme.activeSelection : Theme.inactiveSelection).setFill()
-    NSBezierPath(roundedRect: bounds, xRadius: cornerRadius, yRadius: cornerRadius).fill()
+    let shape = usesHoverShapeForSelection ? hoverShape
+      : NSBezierPath(roundedRect: bounds, xRadius: cornerRadius, yRadius: cornerRadius)
+    shape.fill()
   }
 }
 final class MenuAction: NSObject {

@@ -12,6 +12,7 @@ final class BranchCell: NSTableCellView {
 
 /// The document grows to fit expanded branches; the clip view remains the hover boundary.
 final class BranchOutline: MenuOutline, ThemeUpdating {
+  private let contentInset: CGFloat = 8
   var contentWidthForItem: ((Any) -> CGFloat)?
   private(set) var hoveredRow = -1
   private(set) var expansionView: BranchExpansionView?
@@ -22,6 +23,16 @@ final class BranchOutline: MenuOutline, ThemeUpdating {
   private var fitting = false
   private var updatingHover = false
 
+  override func frameOfOutlineCell(atRow row: Int) -> NSRect {
+    super.frameOfOutlineCell(atRow: row).offsetBy(dx: contentInset, dy: 0)
+  }
+  override func frameOfCell(atColumn column: Int, row: Int) -> NSRect {
+    var rect = super.frameOfCell(atColumn: column, row: row)
+    rect.origin.x += contentInset
+    rect.size.width = max(0, rect.width - contentInset)
+    return rect
+  }
+
   func fitContentWidth() {
     guard !fitting, let scroll = enclosingScrollView, let column = outlineTableColumn else { return }
     fitting = true
@@ -29,7 +40,7 @@ final class BranchOutline: MenuOutline, ThemeUpdating {
     var width = scroll.contentSize.width
     for row in 0..<numberOfRows {
       guard let item = item(atRow: row) else { continue }
-      width = max(width, CGFloat(level(forRow: row) + 1) * indentationPerLevel
+      width = max(width, contentInset + CGFloat(level(forRow: row) + 1) * indentationPerLevel
         + (contentWidthForItem?(item) ?? 0))
     }
     if abs(column.width - width) > 0.5 { column.width = width }
