@@ -884,22 +884,31 @@ extension RepositoryController {
     guard let values = prompt("Go to Hash / Branch / Tag", fields: [("Revision", "")]),
       !values[0].isEmpty, let repo = repository
     else { return }
+    let previousSnapshot = snapshot
+    let currentEpoch = epoch
     queue.async { [weak self] in
       do {
         let hash = try repo.resolve(values[0])
         let commits = try repo.log()
+        func replacingLog(_ old: RepositorySnapshot) -> RepositorySnapshot {
+          RepositorySnapshot(branches: old.branches, commits: commits, changes: old.changes,
+            currentBranch: old.currentBranch, remotes: old.remotes, stashes: old.stashes,
+            operation: old.operation)
+        }
+        let presentation = previousSnapshot.map { RepositoryHistoryPresentation.prepare(replacingLog($0)) }
         DispatchQueue.main.async {
-          guard let self else { return }
+          guard let self, self.epoch == currentEpoch else { return }
           if let index = commits.firstIndex(where: { $0.hash == hash }) {
             self.filter = LogFilter()
             self.logSearch.stringValue = ""
             if let old = self.snapshot {
-              self.snapshot = RepositorySnapshot(
-                branches: old.branches, commits: commits, changes: old.changes,
-                currentBranch: old.currentBranch, remotes: old.remotes, stashes: old.stashes,
-                operation: old.operation)
+              self.snapshot = replacingLog(old)
+              // If another refresh applied while resolving, retain its newer
+              // state and prepare synchronously rather than apply stale data.
+              self.updateUI(presentation: old == previousSnapshot ? presentation : nil)
+            } else {
+              self.updateUI()
             }
-            self.updateUI()
             self.setMode("Log")
             self.logTable.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
             self.logTable.scrollRowToVisible(index)

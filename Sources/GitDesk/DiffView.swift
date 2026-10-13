@@ -1,6 +1,14 @@
 import AppKit
 import GitDeskCore
 
+// Cancellation is shared by the main thread and the serial I/O/comparison queue.
+private final class DiffWorkCancellation {
+  private let lock = NSLock()
+  private var cancelled = false
+  func cancel() { lock.lock(); cancelled = true; lock.unlock() }
+  var isCancelled: Bool { lock.lock(); defer { lock.unlock() }; return cancelled }
+}
+
 final class DiffViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate {
   let table = NSTableView()
   let titleLabel = label("Diff", bold: true)
@@ -12,12 +20,18 @@ final class DiffViewController: NSViewController, NSTableViewDataSource, NSTable
     labels: ["Side-by-side", "Unified"], trackingMode: .selectOne, target: nil, action: nil)
   let whitespace = NSButton(checkboxWithTitle: "Ignore whitespace", target: nil, action: nil)
   let search = NSSearchField()
-  let queue = DispatchQueue(label: "gitdesk.diff", qos: .userInitiated)
+  let queue = DispatchQueue(label: "gitdesk.diff", qos: .userInitiated, autoreleaseFrequency: .workItem)
   var before = Data(), after = Data()
   var diff: TextDiff?
   var token = 0
   private var contentToken = 0
   private var hasContents = false
+  private var calculatedWhitespace: Bool?
+  private var requestedWhitespace: Bool?
+  private(set) var scheduledDiffCalculations = 0
+  private(set) var completedDiffCalculations = 0
+  private var pendingLoad: DiffWorkCancellation?
+  private var pendingCalculation: DiffWorkCancellation?
   var changedIndex = -1
   var nextFile: (() -> Void)?, previousFile: (() -> Void)?
   var compact = false
@@ -146,11 +160,19 @@ final class DiffViewController: NSViewController, NSTableViewDataSource, NSTable
   @objc private func viewportChanged(_ notification: Notification) {
     fitColumnsToViewport()
   }
-  deinit { NotificationCenter.default.removeObserver(self) }
+  deinit {
+    pendingLoad?.cancel()
+    pendingCalculation?.cancel()
+    NotificationCenter.default.removeObserver(self)
+  }
   func clear() {
+    pendingLoad?.cancel()
+    pendingCalculation?.cancel()
     contentToken += 1
     token += 1
     hasContents = false
+    calculatedWhitespace = nil
+    requestedWhitespace = nil
     before = Data()
     after = Data()
     diff = nil
@@ -186,10 +208,16 @@ final class DiffViewController: NSViewController, NSTableViewDataSource, NSTable
     comparison: (String, String)? = nil
   ) {
     _ = view
+    pendingLoad?.cancel()
+    pendingCalculation?.cancel()
+    let request = DiffWorkCancellation()
+    pendingLoad = request
     contentToken += 1
     token += 1
     let current = contentToken
     hasContents = false
+    calculatedWhitespace = nil
+    requestedWhitespace = nil
     before = Data()
     after = Data()
     diff = nil
@@ -208,14 +236,17 @@ final class DiffViewController: NSViewController, NSTableViewDataSource, NSTable
       comparison.map { String($0.1.prefix(8)) } ?? commit?.shortHash
       ?? (staged ? "Index" : "Working Tree")
     queue.async { [weak self] in
+      guard !request.isCancelled else { return }
       do {
         let pair =
           commit == nil && comparison == nil && !staged
           ? try repository.workingDiff(change: change)
           : try repository.contents(
             change: change, commit: commit, staged: staged, comparison: comparison)
+        guard !request.isCancelled else { return }
         DispatchQueue.main.async {
           guard let self, self.contentToken == current else { return }
+          self.pendingLoad = nil
           self.before = pair.0
           self.after = pair.1
           self.hasContents = true
@@ -229,9 +260,9 @@ final class DiffViewController: NSViewController, NSTableViewDataSource, NSTable
       }
     }
   }
-  func setDiff(_ diff: TextDiff) {
+  func setDiff(_ diff: TextDiff, rebuildUnified: Bool = true) {
     self.diff = diff
-    unifiedCache = buildUnifiedLines()
+    if rebuildUnified { unifiedCache = buildUnifiedLines() }
     changedIndex = -1
     view.layoutSubtreeIfNeeded()
     fitColumnsToViewport()
@@ -248,21 +279,52 @@ final class DiffViewController: NSViewController, NSTableViewDataSource, NSTable
     table.scrollRowToVisible(0)
   }
   @objc func optionsChanged() {
+    let ignore = whitespace.state == .on
     configureColumns()
     // Layout changes must not cancel a pending file read or compare stale data.
     guard hasContents else { return }
-    calculateDiff()
+    if let diff, calculatedWhitespace == ignore {
+      // Keep the original asynchronous UI application order, including column
+      // layout and navigation reset, without comparing or copying rows again.
+      token += 1
+      pendingCalculation?.cancel()
+      let request = DiffWorkCancellation()
+      pendingCalculation = request
+      let current = token
+      requestedWhitespace = ignore
+      queue.async { [weak self] in
+        guard !request.isCancelled else { return }
+        DispatchQueue.main.async {
+          guard let self, self.token == current, !request.isCancelled else { return }
+          self.pendingCalculation = nil
+          self.setDiff(diff, rebuildUnified: false)
+        }
+      }
+    } else if requestedWhitespace != ignore {
+      calculateDiff()
+    }
   }
   private func calculateDiff() {
+    pendingCalculation?.cancel()
+    let request = DiffWorkCancellation()
+    pendingCalculation = request
     token += 1
     let current = token
     let before = self.before
     let after = self.after
     let ignore = whitespace.state == .on
+    requestedWhitespace = ignore
+    scheduledDiffCalculations += 1
     queue.async { [weak self] in
-      let diff = TextDiff(before: before, after: after, ignoreWhitespace: ignore)
+      guard !request.isCancelled else { return }
+      guard let diff = TextDiff(before: before, after: after, ignoreWhitespace: ignore,
+        shouldCancel: { request.isCancelled }) else { return }
       DispatchQueue.main.async {
-        guard let self, self.token == current else { return }
+        guard let self else { return }
+        self.completedDiffCalculations += 1
+        guard self.token == current, !request.isCancelled else { return }
+        self.pendingCalculation = nil
+        self.calculatedWhitespace = ignore
         self.setDiff(diff)
       }
     }

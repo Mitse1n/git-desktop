@@ -113,7 +113,10 @@ extension RepositoryController {
     guard let previous = snapshot else { return }
     var target = LogFilter()
     target.branch = commit.hash
-    readHistory("Loading related commit", work: { try $0.filteredSnapshot(from: previous, filter: target) }) { [weak self] data in
+    readHistory("Loading related commit", work: {
+      let data = try $0.filteredSnapshot(from: previous, filter: target)
+      return (data, RepositoryHistoryPresentation.prepare(data))
+    }) { [weak self] data, presentation in
       guard let self else { return }
       self.loadToken += 1
       self.filter = target
@@ -122,7 +125,7 @@ extension RepositoryController {
       self.regexButton.contentTintColor = Theme.text
       self.caseButton.contentTintColor = Theme.text
       self.snapshot = data
-      self.updateUI()
+      self.updateUI(presentation: presentation)
       if let index = data.commits.firstIndex(where: { $0.hash == commit.hash }) { select(self, index: index) }
     }
   }

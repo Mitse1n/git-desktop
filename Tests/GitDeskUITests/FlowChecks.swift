@@ -51,6 +51,32 @@ func runFlowChecks() throws {
   let viewer = DiffViewController()
   viewer.load(repository: repo, change: first)
   drain(viewer.queue)
+  let calculationsBeforeLayout = viewer.scheduledDiffCalculations
+  let rowsBeforeLayout = viewer.diff!.rows
+  let unifiedBeforeLayout = viewer.unifiedLines().map(\.text)
+  for layout in [1, 0, 1, 0] {
+    viewer.layoutToggle.selectedSegment = layout
+    viewer.optionsChanged()
+    drain(viewer.queue)
+    check(viewer.diff!.rows == rowsBeforeLayout && viewer.unifiedLines().map(\.text) == unifiedBeforeLayout,
+      "Layout switches preserve exact split and unified rows")
+  }
+  check(viewer.scheduledDiffCalculations == calculationsBeforeLayout,
+    "Layout switches reuse the current comparison without scheduling more work")
+  let computedBeforeBurst = viewer.completedDiffCalculations
+  let cancelGate = DispatchSemaphore(value: 0)
+  viewer.queue.async { cancelGate.wait() }
+  for _ in 0..<5 {
+    viewer.whitespace.state = .on; viewer.optionsChanged()
+    viewer.whitespace.state = .off; viewer.optionsChanged()
+  }
+  viewer.whitespace.state = .on; viewer.optionsChanged()
+  cancelGate.signal(); drain(viewer.queue)
+  check(viewer.completedDiffCalculations == computedBeforeBurst + 1,
+    "Only the final queued whitespace request performs a comparison")
+  check(viewer.diff!.rows == TextDiff(before: viewer.before, after: viewer.after, ignoreWhitespace: true).rows,
+    "Cancelling obsolete comparisons keeps the final requested result")
+  viewer.whitespace.state = .off; viewer.optionsChanged(); drain(viewer.queue)
   viewer.whitespace.state = .on
   viewer.optionsChanged()
   drain(viewer.queue)
@@ -151,6 +177,43 @@ func runFlowChecks() throws {
   let refreshed = Set(controller.logTable.selectedRowIndexes.map { controller.snapshot!.commits[$0].hash })
   check(refreshed == selected, "Refreshing preserves every selected commit by hash")
   drain(controller.queue)
+  let previousLog = controller.displayedLogCommits
+  let previousGraphs = controller.graphs.map { row in
+    "\(row.lane):\(row.color):" + row.edges.map { "\($0.from),\($0.to),\($0.color)" }.joined(separator: ";")
+  }
+  let previousDetailToken = controller.detailToken
+  let previousDetails = controller.detailsText.string
+  try write("worktree-refresh-only.txt", "new worktree file\n")
+  controller.refresh(); drain(controller.queue)
+  check(controller.snapshot!.changes.contains { $0.path == "worktree-refresh-only.txt" },
+    "Worktree-only refresh updates changed files")
+  check(controller.displayedLogCommits == previousLog && controller.graphs.map { row in
+    "\(row.lane):\(row.color):" + row.edges.map { "\($0.from),\($0.to),\($0.color)" }.joined(separator: ";")
+  } == previousGraphs, "Worktree-only refresh preserves all graph lanes, edges and colors")
+  check(controller.detailToken == previousDetailToken && controller.detailsText.string == previousDetails,
+    "Worktree-only refresh retains the selected immutable commit details")
+  check(Set(controller.logTable.selectedRowIndexes.map { controller.snapshot!.commits[$0].hash }) == selected,
+    "Worktree-only refresh preserves multiple selected commits")
+  check(controller.commitMessage.string == "Original draft", "Worktree-only refresh preserves the commit draft")
+  let snapshotForPreparation = controller.snapshot!
+  let graphBeforePreparation = controller.graphs.map { row in
+    "\(row.lane):\(row.color):" + row.edges.map { "\($0.from),\($0.to),\($0.color)" }.joined(separator: ";")
+  }
+  let reachabilityBeforePreparation = controller.currentBranchHistory
+  var backgroundPresentation: RepositoryHistoryPresentation?
+  var preparedOnBackground = false
+  controller.queue.async {
+    let presentation = RepositoryHistoryPresentation.prepare(snapshotForPreparation)
+    let wasBackground = !Thread.isMainThread
+    DispatchQueue.main.async { backgroundPresentation = presentation; preparedOnBackground = wasBackground }
+  }
+  drain(controller.queue)
+  controller.updateUI(presentation: backgroundPresentation!)
+  check(preparedOnBackground && controller.graphs.map { row in
+    "\(row.lane):\(row.color):" + row.edges.map { "\($0.from),\($0.to),\($0.color)" }.joined(separator: ";")
+  } == graphBeforePreparation && controller.currentBranchHistory == reachabilityBeforePreparation,
+    "Background preparation preserves graph coordinates, colors and HEAD ancestry")
+
 
   check(controller.branchHeadButton?.isEnabled == false,
     "Branch-head navigation stays disabled without a branch selection")

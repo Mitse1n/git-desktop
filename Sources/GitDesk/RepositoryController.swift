@@ -112,6 +112,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
   var pendingDiffHash: String?
   var selectedCommit: Commit?
   var displayedLogCommits: [Commit] = []
+  private var historyPresentation: RepositoryHistoryPresentation?
   var rebuildingLog = false
   var detailFiles: [FileChange] = []
   var detailNodes: [FileNode] = []
@@ -124,7 +125,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
   var selectedPaths = Set<String>()
   var amendDraft: String?
   var amendLoadToken = 0
-  let queue = DispatchQueue(label: "gitdesk.git", qos: .userInitiated)
+  let queue = DispatchQueue(label: "gitdesk.git", qos: .userInitiated, autoreleaseFrequency: .workItem)
   var epoch = 0, loadToken = 0, detailToken = 0
   var isBusy = false
   var isRefreshing = false
@@ -718,6 +719,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     loadedDetailHash = nil
     pendingDiffHash = nil
     selectedCommit = nil
+    historyPresentation = nil
     logTable.deselectAll(nil)
     displayedLogCommits = []
     comparison = nil
@@ -750,6 +752,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
           }
         }
         let data = try repo.snapshot()
+        let presentation = RepositoryHistoryPresentation.prepare(data)
         let ignored = showIgnored ? try repo.ignoredPaths() : []
         let modules = CommitModule.discover(in: repo.workingDirectory)
         let userEmail = (try? repo.run(["config", "user.email"]).trimmingCharacters(in: .whitespacesAndNewlines)) ?? ""
@@ -772,7 +775,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
           recent.insert(repo.workingDirectory.path, at: 0)
           UserDefaults.standard.set(Array(recent.prefix(10)), forKey: "recentRepositories")
           UserDefaults.standard.set(repo.workingDirectory.path, forKey: "lastRepository")
-          self.updateUI()
+          self.updateUI(presentation: presentation)
           self.setMode("Log")
         }
       } catch {
@@ -802,6 +805,8 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     let showIgnored = showIgnoredFiles
     let previousIgnored = ignoredPaths
     let previousModules = commitModules
+    let priorSnapshot = snapshot
+    let priorPresentation = historyPresentation
     if !silent {
       progress.startAnimation(nil)
       statusLabel.stringValue = "Refreshing…"
@@ -816,16 +821,19 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
         }
         let ignored = previous != nil ? previousIgnored : (showIgnored ? try repo.ignoredPaths() : [])
         let modules = previous != nil ? previousModules : CommitModule.discover(in: repo.workingDirectory)
+        let changed = priorSnapshot != data || previousIgnored != ignored || previousModules != modules
+        let presentation = RepositoryHistoryPresentation.prepare(data, reusing: priorPresentation)
         DispatchQueue.main.async {
           guard let self else { return }
           self.isRefreshing = false
           self.progress.stopAnimation(nil)
           if self.loadToken == token && self.epoch == currentEpoch {
-            if self.snapshot != data || self.ignoredPaths != ignored || self.commitModules != modules {
+            if changed {
+              let modulesChanged = previousModules != modules
               self.snapshot = data
               self.ignoredPaths = self.showIgnoredFiles ? ignored : []
               self.commitModules = modules
-              self.updateUI()
+              self.updateUI(previous: priorSnapshot, detailModulesChanged: modulesChanged, presentation: presentation)
             } else {
               self.updateStatus()
             }
@@ -880,39 +888,37 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
       }
     }
   }
-  func updateUI() {
+  func updateUI(previous: RepositorySnapshot? = nil, detailModulesChanged: Bool = false,
+    presentation: RepositoryHistoryPresentation? = nil) {
     guard let data = snapshot else { return }
     operationControls.isHidden = data.operation == nil
     operationLabel.stringValue = (data.operation?.capitalized ?? "") + " in progress"
     operationControls.arrangedSubviews[3].isHidden = data.operation != "rebase"
+    if let previous, previous.commits == data.commits, previous.history == data.history,
+      previous.graphAncestry == data.graphAncestry, previous.branches == data.branches,
+      previous.currentBranch == data.currentBranch {
+      // Worktree, ignored-file, remote or stash changes cannot change log rows,
+      // graph geometry or commit details. Preserve their views and selection.
+      selectedPaths.formIntersection(Set(data.changes.map(\.path)))
+      updateStatus()
+      rebuildWorkingRows()
+      if detailModulesChanged { rebuildDetailFiles() }
+      return
+    }
     let selectedHash = selectedCommit?.hash
     let selectedHashes = Set(logTable.selectedRowIndexes.compactMap { index in
       displayedLogCommits.indices.contains(index) ? displayedLogCommits[index].hash : nil
     })
-    let graphHeads = data.branches.sorted {
-      func priority(_ branch: Branch) -> Int {
-        if branch.kind == .local && ["main", "master"].contains(branch.name) { return 0 }
-        if branch.kind == .remote && ["main", "master"].contains(String(branch.name.split(separator: "/").last ?? "")) { return 1 }
-        if branch.kind == .local { return 2 }
-        return branch.kind == .remote ? 3 : 4
-      }
-      return priority($0) == priority($1) ? $0.name < $1.name : priority($0) < priority($1)
-    }.map(\.hash)
-    graphs = CommitGraph.layout(data.commits, topology: data.graphAncestry, heads: graphHeads)
+    let prepared = presentation ?? RepositoryHistoryPresentation.prepare(data, reusing: historyPresentation)
+    assert(prepared.matches(data))
+    historyPresentation = prepared
+    graphs = prepared.graphs
     logTable.graphLaneCounts = graphs.map(\.laneCount)
     logTable.graphWidth = CGFloat(min(10, CommitGraph.recommendedLaneCount(graphs))) * 15 + 8
     logTable.authorWidth = min(140, max(80, data.commits.map {
       ($0.author as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 13, weight: .semibold)]).width + 12
     }.max() ?? 80))
-    let ancestry = Dictionary(data.graphAncestry.map { ($0.hash, $0) }, uniquingKeysWith: { first, _ in first })
-    currentBranchHistory = []
-    let head = data.branches.first(where: \.current)?.hash ?? data.history.first {
-      $0.decorations.contains { $0 == "HEAD" || $0.hasPrefix("HEAD -> ") }
-    }?.hash
-    var pending = head.map { [$0] } ?? []
-    while let hash = pending.popLast() {
-      if currentBranchHistory.insert(hash).inserted { pending.append(contentsOf: ancestry[hash]?.parents ?? []) }
-    }
+    currentBranchHistory = prepared.currentBranchHistory
     logTable.fitColumns()
     rebuildingLog = true
     displayedLogCommits = data.commits

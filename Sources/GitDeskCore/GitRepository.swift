@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 public final class GitRepository {
   public let root: URL
@@ -12,6 +13,12 @@ public final class GitRepository {
   }
   public init(directory: URL) { root = directory.standardizedFileURL }
   private var rootURL: URL?
+  private struct AncestryIdentity: Equatable {
+    let references: String
+    let boundaries: [Data?]
+  }
+  private let ancestryLock = NSLock()
+  private var ancestryCache: (identity: AncestryIdentity, commits: [CommitAncestry])?
   public var workingDirectory: URL { rootURL ?? root }
   @discardableResult public func run(
     _ args: [String], allowFailure: Bool = false, environment: [String: String] = [:]
@@ -192,14 +199,105 @@ public final class GitRepository {
       skip += commits.count
     }
   }
-  private func graphAncestry() throws -> [CommitAncestry] {
-    guard hasHead else { return [] }
-    return try run(["rev-list", "--topo-order", "--date-order", "--parents", "--all", "HEAD"])
+  private func graphAncestry(gitDirectory: URL) throws -> [CommitAncestry] {
+    // --all includes notes, replacement and custom refs, not only branch/tag refs.
+    // show-ref also resolves detached HEAD, so switching to an unreferenced commit
+    // invalidates the cache. Immutable Git objects then determine the topology.
+    let references = try run(["show-ref", "--head"], allowFailure: true)
+    guard references.split(separator: "\n").contains(where: { $0.hasSuffix(" HEAD") }) else {
+      ancestryLock.lock(); ancestryCache = nil; ancestryLock.unlock()
+      return []
+    }
+    let environment = ProcessInfo.processInfo.environment
+    func path(_ value: String, relativeTo base: URL) -> URL {
+      value.hasPrefix("/") ? URL(fileURLWithPath: value) : base.appendingPathComponent(value).standardizedFileURL
+    }
+    let common: URL
+    if let override = environment["GIT_COMMON_DIR"] {
+      common = path(override, relativeTo: workingDirectory)
+    } else if let value = try? String(contentsOf: gitDirectory.appendingPathComponent("commondir"), encoding: .utf8) {
+      common = path(value.trimmingCharacters(in: .whitespacesAndNewlines), relativeTo: gitDirectory)
+    } else {
+      common = gitDirectory
+    }
+    let boundaryFiles = [
+      environment["GIT_SHALLOW_FILE"].map { path($0, relativeTo: workingDirectory) } ?? common.appendingPathComponent("shallow"),
+      environment["GIT_GRAFT_FILE"].map { path($0, relativeTo: workingDirectory) } ?? common.appendingPathComponent("info/grafts"),
+    ]
+    var readable = true
+    let boundaries: [Data?] = boundaryFiles.map { file in
+      guard FileManager.default.fileExists(atPath: file.path) else { return nil }
+      do { return try Data(contentsOf: file) }
+      catch { readable = false; return nil }
+    }
+    let identity = AncestryIdentity(references: references, boundaries: boundaries)
+    // Bound cache-validation cost for repositories with many references. Their
+    // uncached traversal remains exact and avoids adding a cold-open scan.
+    let cacheEligible = references.split(separator: "\n").count <= 256
+    ancestryLock.lock()
+    let cached = cacheEligible && readable && ancestryCache?.identity == identity ? ancestryCache?.commits : nil
+    ancestryLock.unlock()
+    if let cached { return cached }
+    // Validate cache publication, not just lookup. A concurrent ref update may
+    // occur after show-ref and even change back (ABA) while rev-list is reading.
+    // The generation scan runs only on cache misses; warm refreshes stay cheap.
+    func generation() -> [String: String]? {
+      var result: [String: String] = [:]
+      var valid = true
+      func record(_ file: URL) {
+        guard valid else { return }
+        let name = file.path
+        var info = stat()
+        guard name.withCString({ lstat($0, &info) }) == 0 else {
+          if errno == ENOENT { result[name] = "missing" }
+          else { valid = false }
+          return
+        }
+        guard info.st_mode & S_IFMT != S_IFLNK else { valid = false; return }
+        result[name] = "\(info.st_ino):\(info.st_size):\(info.st_mtimespec.tv_sec):\(info.st_mtimespec.tv_nsec)"
+      }
+      let roots = [gitDirectory, gitDirectory.appendingPathComponent("HEAD"),
+        gitDirectory.appendingPathComponent("commondir"), common,
+        common.appendingPathComponent("packed-refs"), common.appendingPathComponent("info")]
+        + boundaryFiles + boundaryFiles.map { $0.deletingLastPathComponent() }
+      // Parent generations also cover temporary external shallow/graft files.
+      let uniqueRoots = Dictionary(roots.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
+      for file in uniqueRoots.values { record(file) }
+      for tree in [common.appendingPathComponent("refs"), common.appendingPathComponent("reftable")] {
+        record(tree)
+        guard FileManager.default.fileExists(atPath: tree.path) else { continue }
+        guard let entries = FileManager.default.enumerator(at: tree, includingPropertiesForKeys: nil,
+          errorHandler: { _, _ in valid = false; return false }) else { valid = false; continue }
+        for case let entry as URL in entries { record(entry) }
+      }
+      return valid ? result : nil
+    }
+    let beforeGeneration = cacheEligible ? generation() : nil
+    let commits: [CommitAncestry] = try run(["rev-list", "--topo-order", "--date-order", "--parents", "--all", "HEAD"])
       .split(separator: "\n").compactMap { line in
         let hashes = line.split(separator: " ")
         guard let hash = hashes.first else { return nil }
         return CommitAncestry(hash: String(hash), parents: hashes.dropFirst().map(String.init))
       }
+    guard cacheEligible else {
+      ancestryLock.lock()
+      ancestryCache = nil
+      ancestryLock.unlock()
+      return commits
+    }
+    let afterReferences = try run(["show-ref", "--head"], allowFailure: true)
+    let afterBoundaries: [Data?] = boundaryFiles.map { file in
+      guard FileManager.default.fileExists(atPath: file.path) else { return nil }
+      do { return try Data(contentsOf: file) }
+      catch { readable = false; return nil }
+    }
+    let afterGeneration = generation()
+    let stable = readable && beforeGeneration != nil && beforeGeneration == afterGeneration
+      && afterReferences == references && afterBoundaries == boundaries
+    ancestryLock.lock()
+    ancestryCache = stable ? (identity, commits) : nil
+    ancestryLock.unlock()
+    return commits
   }
   public func snapshot(filter: LogFilter = LogFilter()) throws -> RepositorySnapshot {
     var refs = try branches()
@@ -229,7 +327,8 @@ public final class GitRepository {
       changes: try status(), currentBranch: branch.isEmpty ? "Detached HEAD" : branch,
       remotes: try run(["remote"]).split(separator: "\n").map(String.init),
       stashes: try run(["stash", "list", "--format=%gd: %s"]).split(separator: "\n").map(
-        String.init), operation: operation, history: history, graphAncestry: try graphAncestry())
+        String.init), operation: operation, history: history,
+      graphAncestry: try graphAncestry(gitDirectory: URL(fileURLWithPath: gitDir)))
   }
   // Changing a history filter does not change refs, the worktree, or stashes.
   // Keep their last snapshot until an explicit/background repository refresh.

@@ -59,6 +59,8 @@ func XCTUnwrap<T>(_ value: @autoclosure () throws -> T?) throws -> T {
 }
 
 let cases: [(String, (GitRepositoryTests) throws -> Void)] = [
+  ("Ancestry cache publication races and ABA", { try $0.testAncestryCachePublicationRaces() }),
+  ("Ancestry cache invalidation and uncached parity", { try $0.testAncestryCacheInvalidation() }),
   ("Old branch graph beyond log limit", { try $0.testOldBranchGraphBeyondLogLimit() }),
   ("Undo and reword preserve local changes", { try $0.testUndoAndRewordPreserveLocalChanges() }),
   ("Undo root and history guards", { try $0.testUndoRootAndHistoryGuards() }),
@@ -107,6 +109,8 @@ for (name, body) in cases {
   print((failures.count == start ? "PASS " : "FAIL ") + name)
 }
 let diffCases: [(String, () -> Void)] = [
+  ("Optimized Diff exact reference parity", { DiffAndGraphTests().testOptimizedDiffMatchesReference() }),
+  ("Diff cancellation and 10000-line replacement", { DiffAndGraphTests().testDiffCancellationAndLargeReplacement() }),
   ("Graph branch colors follow connections", { DiffAndGraphTests().testGraphBranchColorsFollowConnections() }),
   ("Old nested merges and incomplete graph cache", { DiffAndGraphTests().testGraphOldNestedMergesAndIncompleteCache() }),
   ("Graph branch order and disconnected heads", { DiffAndGraphTests().testGraphBranchOrderAndDisconnectedHeads() }),
