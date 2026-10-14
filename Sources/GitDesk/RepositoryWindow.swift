@@ -65,6 +65,7 @@ final class RepositoryWindowController: NSWindowController, NSWindowDelegate {
   }
   func windowWillClose(_ notification: Notification) {
     repositoryController.watcher?.invalidate()
+    repositoryController.terminalWorkspace.shutdown()
     repositoryController.diffWindows.forEach { $0.close() }
     repositoryController.conflictWindows.forEach { $0.close() }
     repositoryController.revisionWindows.forEach { $0.close() }

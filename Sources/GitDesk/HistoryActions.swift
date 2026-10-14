@@ -113,10 +113,9 @@ extension RepositoryController {
     guard let previous = snapshot else { return }
     var target = LogFilter()
     target.branch = commit.hash
-    let showLongEdges = showLongGraphEdges
     readHistory("Loading related commit", work: {
       let data = try $0.filteredSnapshot(from: previous, filter: target)
-      return (data, RepositoryHistoryPresentation.prepare(data, showLongEdges: showLongEdges))
+      return (data, RepositoryHistoryPresentation.prepare(data))
     }) { [weak self] data, presentation in
       guard let self else { return }
       self.loadToken += 1

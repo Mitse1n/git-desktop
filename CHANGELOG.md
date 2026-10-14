@@ -4,9 +4,27 @@ Notable changes are recorded here. The project is in early development; the app 
 
 ## Unreleased
 
+### Fixed
+
+- Keep the repository window vertically resizable when the embedded terminal has no sessions; its empty-state label no longer pulls hidden workspace and window heights down to their fitting size.
+
+- Preserve current-branch background outside rounded commit selections, and redraw viewport-anchored row backgrounds during horizontal scrolling to prevent repeated hover/selection edge trails in narrow branch/tag panes.
+
+- Clip diff connectors, gutter fills, and insertion/deletion markers to the editor viewport so scrolling large changes cannot paint over the toolbar or revision headers.
+
 ### Added
 
-- IDEA-style compact history graphs: fold edges spanning 30 or more displayed rows into endpoint arrows, repack visible tracks, show continuation arrows at page boundaries, and persist the Long Edges view option. Let wide rows extend into the subject cell with per-row text/hover insets and use a subdued branch palette.
+- Embedded SwiftTerm PTY terminal with persistent repository sessions, and native GitHub/GitLab collaboration panels covering PR/MR browsing, local review diffs, checkout, creation/drafts, comments/line threads, review decisions, reviewer requests, merge/state changes, CI checks and snippet sharing. Hosting tokens are validated and stored in macOS Keychain; self-hosted services are configurable.
+
+- Display theme-aware file-type SVG icons in historical diffs, working changes, and revision file trees, keeping Git status colors on filenames.
+
+- IDEA-style recent commit timestamps (Moments ago, minutes ago, Today, Yesterday), refreshed in place with exact date tooltips and local-calendar handling across midnight, year boundaries, and daylight-saving changes.
+
+- Join adjacent selected rows into one rounded block with straight sides across file trees, branches/tags, the commit graph, and working changes. Branch/tag selections support native Command/Shift multi-selection, batch favorites, refresh preservation, and context menus that retain the selection. Local branch multi-selection offers Update Selected and Delete Branches, with upstream fetching, fast-forward/merge updates, and guarded batch deletion.
+
+- Bundle JetBrains Mono Regular/Italic for the diff editor and align its gutter borders, chunk curves, caret numbers, editor colors, outside scroll thumbs, and navigation styling with the IDEA reference.
+
+- IDEA-inspired diff refinements implemented in Swift/AppKit: multiple file/line selection, per-side copy, a multi-file chooser, multiline-aware syntax colors, separate inline edit highlights in both layouts, change connectors, and F7/Shift-F7 navigation. Group/file selections are deduplicated, and syntax work is cached and cancellable.
 
 - IDEA-style branch-tree hover highlights and full-name expansion over neighboring panes, bounded by the window. Horizontal scrolling follows expanded branch widths and preserves the scroll position on refresh; collapse and filtering reclaim unused space.
 

@@ -248,15 +248,11 @@ extension RepositoryController {
       if item.count > 0 { views.append(label("\(item.count) " + (item.count == 1 ? "file" : "files"), color: Theme.muted, size: 12)) }
     } else if let file = item.file {
       views.append(workingCheckbox(files: [file], name: file.path + " in commit", index: index))
-      let icon = NSImageView()
-      let filename = (file.path as NSString).lastPathComponent
-      let symbol = file.isConflicted ? "exclamationmark.triangle" : filename == ".gitignore" ? "nosign"
-        : ["xml", "html", "swift", "java", "js", "ts", "json"].contains((filename as NSString).pathExtension)
-          ? "chevron.left.forwardslash.chevron.right" : "doc"
-      icon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: file.status)
+      let icon: NSImageView = file.isConflicted
+        ? NSImageView(image: NSImage(systemSymbolName: "exclamationmark.triangle", accessibilityDescription: file.status)!)
+        : FileTypeImageView(path: file.path)
       let color = file.isConflicted || file.isUntracked ? Theme.red : file.status == "Added" ? Theme.green : Theme.blue
-      icon.contentTintColor = file.isUntracked ? Theme.muted : color
-      if symbol == "chevron.left.forwardslash.chevron.right" { icon.contentTintColor = Theme.keyword }
+      if file.isConflicted { icon.contentTintColor = Theme.red }
       icon.widthAnchor.constraint(equalToConstant: 16).isActive = true
       icon.heightAnchor.constraint(equalToConstant: 16).isActive = true
       views.append(icon)

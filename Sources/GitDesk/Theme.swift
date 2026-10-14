@@ -28,8 +28,8 @@ enum Theme {
   static let string = dynamic(.string)
   static let heading = dynamic(.heading)
   static let graph: [NSColor] = [
-    (0x9F3C54, 0xA33D55), (0xA6753D, 0x95652F), (0x489C38, 0x39832D),
-    (0x7E47A6, 0x7B43A1), (0x4149A7, 0x4149A7), (0x2D9B85, 0x268773),
+    (0x3D8E9C, 0x167D8D), (0xA571E6, 0x8150BE), (0xC89056, 0xA36B24),
+    (0x77A66A, 0x337A3A), (0xC77DBB, 0xA33B8B), (0x669DF6, 0x315FBD),
   ].enumerated().map { index, pair in
     NSColor(name: NSColor.Name("GitDesk.graph.\(index)")) { _ in
       NSColor(hex: current.isDark ? pair.0 : pair.1)
@@ -410,6 +410,7 @@ final class LogTable: MenuTable {
     }
   }
   var graphWidth: CGFloat = 44
+  var graphLaneCounts: [Int] = []
   var authorWidth: CGFloat = 90
   private(set) var hoveredRow = -1
   private var fitting = false
@@ -600,9 +601,15 @@ final class LogTable: MenuTable {
     scrollObserver = nil
     if window != nil, let clip = enclosingScrollView?.contentView {
       clip.postsBoundsChangedNotifications = true
+      var lastViewport = clip.bounds
       scrollObserver = NotificationCenter.default.addObserver(
         forName: NSView.boundsDidChangeNotification, object: clip, queue: .main
-      ) { [weak self] _ in
+      ) { [weak self, weak clip] _ in
+        guard let clip else { return }
+        if clip.bounds.minX != lastViewport.minX || clip.bounds.width != lastViewport.width {
+          self?.invalidateViewportRows()
+        }
+        lastViewport = clip.bounds
         self?.dismissTextExpansion()
         self?.fitColumns()
         self?.updateHoveredRow()
@@ -620,7 +627,13 @@ final class LogTable: MenuTable {
     guard !fitting, columnDrag == nil, tableColumns.count == 4,
       let width = enclosingScrollView?.contentSize.width, width > 0 else { return }
     fitting = true
-    let requiredGraphWidth = graphWidth
+    let visible = rows(in: visibleRect)
+    var requiredGraphWidth = graphWidth
+    if visible.location != NSNotFound, visible.location < graphLaneCounts.count {
+      let end = min(graphLaneCounts.count, visible.location + visible.length)
+      let lanes = graphLaneCounts[visible.location..<end].max() ?? 0
+      requiredGraphWidth = max(graphWidth, CGFloat(lanes) * 15 + 8)
+    }
     let author = tableColumns[2].isHidden ? 0 : resizedAuthorWidth ?? authorWidth
     let date = tableColumns[3].isHidden ? 0 : resizedDateWidth ?? 126
     let widths = [requiredGraphWidth, max(tableColumns[1].minWidth,
@@ -729,25 +742,44 @@ class MenuOutline: NSOutlineView {
   }
   override func menu(for event: NSEvent) -> NSMenu? {
     let row = row(at: convert(event.locationInWindow, from: nil))
-    if row >= 0 { selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false) }
+    if row >= 0 && !selectedRowIndexes.contains(row) {
+      selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+    }
     return menuProvider?()
+  }
+}
+extension NSTableView {
+  /// Viewport-anchored rounded backgrounds cannot reuse horizontally shifted
+  /// backing pixels: AppKit otherwise leaves copies of the old right edge.
+  func invalidateViewportRows() {
+    setNeedsDisplay(visibleRect)
+    let visible = rows(in: visibleRect)
+    guard visible.location != NSNotFound, visible.length > 0 else { return }
+    for index in visible.location..<min(numberOfRows, visible.location + visible.length) {
+      rowView(atRow: index, makeIfNecessary: false)?.needsDisplay = true
+    }
   }
 }
 final class SelectionRow: NSTableRowView {
   var usesInactiveColor = true
-  var cornerRadius: CGFloat = 0
-  var usesHoverShapeForSelection = false
+  var cornerRadius: CGFloat = 4
   var backgroundTint: NSColor?
   var hoverColor = Theme.hover
   var isHovered = false { didSet { if oldValue != isHovered { needsDisplay = true } } }
+  override var isPreviousRowSelected: Bool { didSet { needsDisplay = true } }
+  override var isNextRowSelected: Bool { didSet { needsDisplay = true } }
+  private var viewportRowRect: NSRect {
+    NSRect(x: visibleRect.minX + 4, y: bounds.minY,
+      width: max(0, visibleRect.width - 8), height: bounds.height)
+  }
   private var hoverShape: NSBezierPath {
-    NSBezierPath(roundedRect: visibleRect.insetBy(dx: 4, dy: 0), xRadius: 4, yRadius: 4)
+    NSBezierPath(roundedRect: viewportRowRect, xRadius: 4, yRadius: 4)
   }
   override func drawBackground(in dirtyRect: NSRect) {
-    if let backgroundTint, !isSelected {
-      backgroundTint.setFill()
-      bounds.fill()
-    } else { super.drawBackground(in: dirtyRect) }
+    // Rounded selection covers only part of a row. Keep the unselected branch
+    // tint underneath its outside corners and clear every invalidated pixel.
+    (backgroundTint ?? backgroundColor).setFill()
+    bounds.fill()
     if isHovered && !isSelected {
       hoverColor.setFill()
       hoverShape.fill()
@@ -755,9 +787,21 @@ final class SelectionRow: NSTableRowView {
   }
   override func drawSelection(in dirtyRect: NSRect) {
     (isEmphasized || !usesInactiveColor ? Theme.activeSelection : Theme.inactiveSelection).setFill()
-    let shape = usesHoverShapeForSelection ? hoverShape
-      : NSBezierPath(roundedRect: bounds, xRadius: cornerRadius, yRadius: cornerRadius)
-    shape.fill()
+    selectionShape.fill()
+  }
+  // Like IDEA DefaultTreeUI, join adjacent rows and round only the outside corners.
+  // AppKit updates neighbor flags even for rows entering the viewport during scrolling.
+  var selectionShape: NSBezierPath {
+    let rect = viewportRowRect
+    let radius = min(cornerRadius, rect.height / 2)
+    let shape = NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius)
+    if isPreviousRowSelected {
+      shape.appendRect(NSRect(x: rect.minX, y: rect.minY, width: rect.width, height: radius))
+    }
+    if isNextRowSelected {
+      shape.appendRect(NSRect(x: rect.minX, y: rect.maxY - radius, width: rect.width, height: radius))
+    }
+    return shape
   }
 }
 final class MenuAction: NSObject {
@@ -774,23 +818,13 @@ func menuItem(_ title: String, enabled: Bool = true, handler: @escaping () -> Vo
   return item
 }
 final class GraphCell: NSView {
-  static let laneSpacing: CGFloat = 18
-  static let leftInset: CGFloat = 16
-  static func requiredWidth(lanes: Int) -> CGFloat {
-    leftInset + CGFloat(max(0, lanes - 1)) * laneSpacing + 12
-  }
   var graph: GraphRow? { didSet { needsDisplay = true } }
   var isHead = false
   override func draw(_ dirtyRect: NSRect) {
     guard let graph else { return }
-    NSGraphicsContext.saveGraphicsState()
-    bounds.clip()
-    Self.draw(graph, isHead: isHead, height: bounds.height)
-    NSGraphicsContext.restoreGraphicsState()
-  }
-  static func draw(_ graph: GraphRow, isHead: Bool, height h: CGFloat, offsetX: CGFloat = 0) {
+    let h = bounds.height
     let middle = h / 2
-    func x(_ lane: Double) -> CGFloat { offsetX + leftInset + CGFloat(lane) * laneSpacing }
+    func x(_ lane: Double) -> CGFloat { 16 + CGFloat(lane) * 15 }
     for segment in graph.segments {
       let path = NSBezierPath()
       path.lineWidth = 1.6
@@ -798,21 +832,6 @@ final class GraphCell: NSView {
       path.line(to: NSPoint(x: x(segment.toLane), y: h * segment.toY))
       let color = Theme.graph[segment.color % Theme.graph.count]
       color.setStroke()
-      path.stroke()
-    }
-    for arrow in graph.arrows {
-      let center = NSPoint(x: x(Double(arrow.lane)), y: middle)
-      let direction: CGFloat = arrow.pointsDown ? -1 : 1
-      let tip = NSPoint(x: center.x, y: middle + direction * min(9, h * 0.36))
-      let path = NSBezierPath()
-      path.lineWidth = 1.6
-      path.lineJoinStyle = .round
-      path.move(to: center)
-      path.line(to: tip)
-      path.move(to: NSPoint(x: tip.x - 4, y: tip.y - direction * 6))
-      path.line(to: tip)
-      path.line(to: NSPoint(x: tip.x + 4, y: tip.y - direction * 6))
-      Theme.graph[arrow.color % Theme.graph.count].setStroke()
       path.stroke()
     }
     let color = Theme.graph[graph.color % Theme.graph.count]

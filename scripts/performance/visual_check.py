@@ -15,7 +15,8 @@ def render(package, sources, output, executable):
     bin_dir = Path(sp.check_output(["swift", "build", "-c", "release", "--show-bin-path"], cwd=package, text=True).strip())
     ui = sorted(p for p in (sources / "GitDesk").glob("*.swift") if p.name != "main.swift")
     sp.run(["swiftc", "-O", "-I", str(bin_dir / "Modules"),
-            *map(str, sorted((bin_dir / "GitDeskCore.build").glob("*.o"))), *map(str, ui),
+            *map(str, sorted((bin_dir / "GitDeskCore.build").glob("*.o"))),
+            *map(str, sorted((bin_dir / "SwiftTerm.build").glob("*.o"))), *map(str, ui),
             str(PROJECT / "scripts/performance/VisualChecks/main.swift"), "-o", str(executable)], check=True)
     combined = []
     # Isolate each palette from previous windows/appearance caches, as a fresh

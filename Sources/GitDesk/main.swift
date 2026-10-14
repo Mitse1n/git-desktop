@@ -103,6 +103,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     addAction(git, "Pull…", key: "t") { [weak self] in self?.controller?.remoteAction("pull") }
     addAction(git, "Fetch") { [weak self] in self?.controller?.remoteAction("fetch") }
     git.addItem(.separator())
+    addAction(git, "Clone Repository…") { [weak self] in self?.controller?.cloneRepository() }
+    git.addItem(.separator())
     addAction(git, "Branches…") { [weak self] in self?.controller?.showBranchMenu() }
     addAction(git, "New Branch…", key: "n", modifiers: [.command, .option]) { [weak self] in
       self?.controller?.newBranch()
@@ -114,6 +116,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let view = NSMenu()
     addAction(view, "Git Log", key: "1") { [weak self] in self?.controller?.setMode("Log") }
     addAction(view, "Console", key: "2") { [weak self] in self?.controller?.setMode("Console") }
+    addAction(view, "Terminal", key: "3") { [weak self] in self?.controller?.setMode("Terminal") }
+    addAction(view, "Pull Requests / Merge Requests", key: "4") { [weak self] in self?.controller?.setMode("Reviews") }
     addAction(view, "Refresh", key: "r") { [weak self] in self?.controller?.refresh() }
     addAction(view, "Filter by Text or Hash", key: "l") { [weak self] in
       self?.controller?.focusSearch()

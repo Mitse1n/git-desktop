@@ -295,10 +295,12 @@ final class RevisionBrowserWindowController: NSWindowController, NSWindowDelegat
   func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
     let node = item as! RevisionNode
     let cell = NSTableCellView()
-    let icon = NSImageView(image: NSImage(systemSymbolName: node.file == nil ? "folder" : "doc", accessibilityDescription: nil)!)
-    icon.contentTintColor = Theme.muted
+    let icon: NSImageView = node.file.map { FileTypeImageView(path: $0.path) }
+      ?? NSImageView(image: NSImage(systemSymbolName: "folder", accessibilityDescription: "Folder")!)
+    if node.file == nil { icon.contentTintColor = Theme.muted }
     icon.translatesAutoresizingMaskIntoConstraints = false
-    icon.widthAnchor.constraint(equalToConstant: 14).isActive = true
+    icon.widthAnchor.constraint(equalToConstant: 16).isActive = true
+    icon.heightAnchor.constraint(equalToConstant: 16).isActive = true
     let title = label(node.title)
     cell.textField = title
     pin(row([icon, title]), to: cell, inset: 3)

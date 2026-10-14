@@ -109,6 +109,30 @@ extension RepositoryController {
   }
   func branchContextMenu() -> NSMenu {
     if let branch = selectedBranch { return branchMenu(branch) }
+    if !selectedBranches.isEmpty {
+      let branches = selectedBranches
+      let menu = NSMenu()
+      menu.autoenablesItems = false
+      if branches.allSatisfy({ $0.kind == .local }), snapshot?.remotes.isEmpty == false {
+        let update = menuItem("Update Selected", enabled: !isBusy && branches.allSatisfy { !$0.upstream.isEmpty }) { [weak self] in
+          self?.perform("Update selected branches", work: { try $0.updateBranches(branches) })
+        }
+        update.image = NSImage(systemSymbolName: "arrow.down.left", accessibilityDescription: nil)
+        update.toolTip = branches.allSatisfy { !$0.upstream.isEmpty }
+          ? "Fetch upstreams; fast-forward non-current branches and merge updates into the current branch."
+          : "Configure an upstream for every selected branch to update them."
+        menu.addItem(update)
+      }
+      let delete = menuItem(branches.allSatisfy { $0.kind != .tag } ? "Delete Branches" : "Delete",
+        enabled: !isBusy && !branches.contains(where: \.current)) { [weak self] in
+        self?.deleteSelectedBranches(branches)
+      }
+      delete.image = NSImage(systemSymbolName: "trash", accessibilityDescription: nil)
+      delete.keyEquivalent = "\u{8}"
+      delete.keyEquivalentModifierMask = .command
+      menu.addItem(delete)
+      return menu
+    }
     let menu = NSMenu()
     menu.addItem(
       menuItem("New Branch…", enabled: repository != nil) { [weak self] in self?.newBranch() })
@@ -208,7 +232,20 @@ extension RepositoryController {
         if self?.filter.branch == branch.fullRef { self?.filter.branch = "refs/heads/" + values[0] }
       })
   }
+  func deleteSelectedBranches(_ branches: [Branch]) {
+    guard !branches.isEmpty, !branches.contains(where: \.current),
+      confirm("Delete Selected References?",
+        message: branches.map(\.name).joined(separator: "\n")
+          + "\n\nUnmerged local branches will not be deleted. Remote-tracking references are removed locally.",
+        action: "Delete") else { return }
+    perform("Delete selected references", work: { try $0.deleteBranches(branches) }, completion: { [weak self] in
+      if let ref = self?.filter.branch, branches.contains(where: { $0.fullRef == ref }) {
+        self?.filter.branch = nil
+      }
+    })
+  }
   func deleteBranch(_ branch: Branch? = nil) {
+    if branch == nil, selectedBranches.count > 1 { deleteSelectedBranches(selectedBranches); return }
     guard let branch = branch ?? selectedBranch, !branch.current,
       confirm(
         "Delete '\(branch.name)'?",
@@ -755,35 +792,12 @@ extension RepositoryController {
     displayedCurrentBranchHighlight = shouldHighlightCurrentBranch
     logTable.reloadKeepingSelection()
   }
-  func toggleLongGraphEdges() {
-    showLongGraphEdges.toggle()
-    guard let data = snapshot else { return }
-    let showLongEdges = showLongGraphEdges
-    let prior = historyPresentation
-    let currentEpoch = epoch
-    queue.async { [weak self] in
-      let presentation = RepositoryHistoryPresentation.prepare(data, reusing: prior, showLongEdges: showLongEdges)
-      DispatchQueue.main.async {
-        guard let self, self.epoch == currentEpoch, self.snapshot.map({ presentation.matches($0) }) == true,
-          self.showLongGraphEdges == showLongEdges else { return }
-        let origin = self.logTable.enclosingScrollView?.contentView.bounds.origin
-        self.updateUI(presentation: presentation)
-        if let origin, let scroll = self.logTable.enclosingScrollView {
-          scroll.contentView.scroll(to: origin)
-          scroll.reflectScrolledClipView(scroll.contentView)
-        }
-      }
-    }
-  }
   func logViewOptions(anchor: NSView? = nil) {
     let menu = NSMenu()
     menu.addItem(NSMenuItem.sectionHeader(title: "Show"))
     menu.addItem(option("Compact References View", checked: compactReferences) { [weak self] in
       self?.compactReferences.toggle()
       self?.reloadLogAppearance()
-    })
-    menu.addItem(option("Long Edges", checked: showLongGraphEdges) { [weak self] in
-      self?.toggleLongGraphEdges()
     })
     menu.addItem(option("Tag Names", checked: showLogTagNames) { [weak self] in
       self?.showLogTagNames.toggle()
@@ -847,15 +861,27 @@ extension RepositoryController {
     })
     popup(menu, anchor: anchor)
   }
-  func toggleFavorite(_ branch: Branch) {
+  func setBranchFavorites(_ branches: [Branch], favorite: Bool) {
     var refs = favoriteRefs
-    if refs.contains(branch.fullRef) { refs.remove(branch.fullRef) }
-    else { refs.insert(branch.fullRef) }
+    for branch in branches {
+      if favorite { refs.insert(branch.fullRef) } else { refs.remove(branch.fullRef) }
+    }
     favoriteRefs = refs
     rebuildBranches()
   }
+  func toggleSelectedBranchFavorites() {
+    let branches = selectedBranches
+    guard !branches.isEmpty else { return }
+    setBranchFavorites(branches, favorite: !branches.allSatisfy { favoriteRefs.contains($0.fullRef) })
+  }
+  func toggleFavorite(_ branch: Branch) {
+    setBranchFavorites([branch], favorite: !favoriteRefs.contains(branch.fullRef))
+  }
   @objc func branchSingleClick() {
-    guard let node = branchOutline.item(atRow: branchOutline.clickedRow) as? BranchNode,
+    // Extending a selection must not jump the log or replace its filter.
+    guard branchOutline.selectedRowIndexes.count == 1,
+      NSApp.currentEvent?.modifierFlags.intersection([.command, .shift]).isEmpty != false,
+      let node = branchOutline.item(atRow: branchOutline.clickedRow) as? BranchNode,
       node.branch != nil || node.title == "HEAD (Current Branch)" else { return }
     let ref = node.branch?.fullRef ?? "HEAD"
     if branchClickUpdatesFilter {
@@ -908,7 +934,6 @@ extension RepositoryController {
     guard let values = prompt("Go to Hash / Branch / Tag", fields: [("Revision", "")]),
       !values[0].isEmpty, let repo = repository
     else { return }
-    let showLongEdges = showLongGraphEdges
     let previousSnapshot = snapshot
     let currentEpoch = epoch
     queue.async { [weak self] in
@@ -922,7 +947,7 @@ extension RepositoryController {
             operation: old.operation, history: old.history, graphAncestry: old.graphAncestry,
             hasMoreCommits: page.hasMore)
         }
-        let presentation = previousSnapshot.map { RepositoryHistoryPresentation.prepare(replacingLog($0), showLongEdges: showLongEdges) }
+        let presentation = previousSnapshot.map { RepositoryHistoryPresentation.prepare(replacingLog($0)) }
         DispatchQueue.main.async {
           guard let self, self.epoch == currentEpoch else { return }
           if let index = commits.firstIndex(where: { $0.hash == hash }) {

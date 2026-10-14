@@ -9,7 +9,7 @@ A native Git desktop client for macOS, built with Swift and AppKit.
 
 English · [简体中文](README.zh-CN.md)
 
-GitDesk brings commit history, branches, selected-file commits, and diffs into one native window. Its workflow is inspired by the Git tools in IntelliJ IDEA. It uses the system Git executable and has no third-party package dependencies.
+GitDesk brings commit history, branches, selected-file commits, and diffs into one native window. Its workflow is inspired by the Git tools in IntelliJ IDEA. It uses the system Git executable and SwiftTerm for its embedded terminal.
 
 **Status: early development.** Build from source using the instructions below. App bundles are ad-hoc signed, without Developer ID signing or notarization.
 
@@ -19,14 +19,17 @@ GitDesk brings commit history, branches, selected-file commits, and diffs into o
 
 ## Features
 
+- **Terminal:** a real VT100/xterm PTY with multiple sessions, repository working directories, ANSI colors, Unicode, resize, copy/paste, Ctrl-C, and shell history. Git Console remains a separate command log.
+- **GitHub / GitLab:** native PR/MR lists with pagination and local filtering, descriptions, changed-file patches and full local diffs, checkout, creation/drafts, comments and line comments, threaded replies/resolution, reviewers, approval/change requests, close/reopen, merge/squash (GitHub also rebase), CI status, and gist/project snippet sharing. Server permissions and branch protection rules apply. GitHub Enterprise and self-hosted GitLab can be configured in Connect Account.
+
 - **Themes:** Island Dark, Island Light, Light, and Dark. Choose GitDesk → Settings… (⌘,) → Appearance, or View → Theme. Changes apply immediately to every window and persist across launches; Island themes round the outer tool window; internal panes stay flat with thin dividers.
 
-- **History:** drag the message/author/date column boundaries to adjust widths, rounded commit-row hover highlights, in-place expansion of truncated messages/authors/dates with window-bounded wrapping and overflow ellipses, colored commit graph with consistent branch colors for dots and connections, ancestry-ordered tracks that remain correct for old branches beyond the visible log limit, connections meeting commit centers, and IDEA-style compact graph tracks with per-row message insets and arrows for edges spanning 30 or more displayed rows (toggle Long Edges in Log View Options), branch and tag decorations, a distinct current-branch marker and default favorites for local/origin main and master, text/hash search, regex and case options, branch/author/date/path filters, and first-parent history.
+- **History:** drag the message/author/date column boundaries to adjust widths, rounded commit-row hover highlights, in-place expansion of truncated messages/authors/dates with window-bounded wrapping and overflow ellipses, colored commit graph with consistent branch colors for dots and connections, ancestry-ordered tracks that remain correct for old branches beyond the visible log limit, and connections meeting commit centers, branch and tag decorations, a distinct current-branch marker and default favorites for local/origin main and master, text/hash search, regex and case options, branch/author/date/path filters, and first-parent history.
 - **History actions:** undo the latest commit while preserving local/index changes, edit latest or earlier messages, parent/child navigation, patch export, and a read-only repository snapshot browser. A native interactive rebase editor supports reorder, pick, reword, squash, fixup, and drop.
 - **Branches:** horizontal/vertical branch-tree scrolling, gray row hover highlights and window-bounded expansion of clipped names, grouped local/remote branches and tags, favorites, checkout, create, rename, delete, compare, merge, rebase, and worktrees. Branch pane settings control directory grouping, tag visibility, and single-click filtering or navigation to a branch head.
 - **View options:** independent Log, branch, historical-file, and Commit menus. Log options control compact references, tag names, reference placement, author/date columns, and highlighting. Historical files support directory/module grouping (Control-P/Control-M), commit details visibility, and file counts. The right sidebar contains the file tree above compact commit details; open diffs with double-click or ⌘D. Display choices persist, and changing Log appearance retains selected commits.
 - **Commits:** changes grouped by directory or detected IDEA module, click/Space inclusion with mixed group states, a resizable message area, stage/unstage, change previews, amend, message history, and commit and push. View options group by Directory/Module and show ignored files separately (ignored entries cannot be included in commits; their context menu offers Copy Path and Show in Finder while disabling diff, stage, unstage, and rollback); Module grouping reads IDEA module definitions and uses the repository as a single module when none exist; commit options set an optional author and sign-off trailer. Ordinary selected-file commits preserve unrelated staged changes using a temporary index.
-- **Diffs:** side-by-side and unified views, line numbers, change navigation, search, whitespace options, and basic syntax highlighting.
+- **Diffs:** side-by-side and unified views, bundled JetBrains Mono Regular/Italic editor fonts, multiline-aware syntax colors, inline edit highlights, and continuous hunk connectors. Split panes retain original line counts, synchronize scrolling, keep gutters fixed, and allow long lines to scroll horizontally. Added/deleted files use a full-width single pane. XML tags/strings and Markdown heading punctuation/italic text have separate styles. Find (⌘F) and whitespace controls live in the gear popover. Command/Shift-select files to review them together using the file chooser; select code lines and use ⌘C for the right side or the context menu for either version. F7/Shift-F7 navigates changes; search cycles through matches. Includes line numbers and whitespace options.
 - **Remotes:** clone, fetch, fast-forward-only pull, push, and remote configuration. Authentication uses existing Git/SSH/credential-helper configuration.
 
 - **Repository tools:** initialize/open repositories, recent repositories, repository-local identity, stash, text conflict resolution, cherry-pick, revert, reset, and continue/abort operations.
@@ -101,6 +104,7 @@ The demo includes branches, a merge, a tag, and uncommitted changes. An existing
 | `⌘D` | Show diff |
 | `⌥⌘N` | New branch |
 | `⌘1` / `⌘2` | Log / Console |
+| `⌘3` / `⌘4` | Terminal / Reviews |
 
 Opening or choosing a recent repository replaces the project in the current window. Use **New Window** (`⌘N`) for another independent project window. Double-clicking a commit updates its selection and details without opening a diff window; use **Show Diff** or `⌘D` to open one explicitly.
 
@@ -114,6 +118,14 @@ Rebase requires a clean working tree, supports up to 10,000 commits, and rejects
 
 **Create Patch** exports a Git-format patch for a normal/root commit, and a binary-capable first-parent diff for a merge. **Show Repository at Revision** browses files without checking out the revision; text previews are read only, capped at 2 MB, and do not follow symlinks or open submodules.
 
+## Hosting accounts and terminal
+
+Open **Reviews → Connect Account**. Select GitHub or GitLab, enter the HTTPS server URL and a personal access token. Tokens are validated against `/user` and stored only in macOS Keychain. For private GitHub repositories use a token with Pull requests read/write, Contents read, and Issues read/write; CI check visibility can require Checks read. Draft conversion and threaded discussion use GitHub GraphQL and need compatible repository permissions. GitLab operations require an `api` token; approvals depend on your server edition and project policy. Fine-grained GitHub tokens may not support every GraphQL/gist operation; the UI shows the server’s permission error.
+
+Select a remote, state, and request. Double-click a changed file or use **Show Diff** to fetch review refs and open the native diff. Right-click a source line there to comment on that exact old/new line. Fetching a diff does not check out a branch. **Check Out** creates a separate review branch and does not overwrite existing work. **Review…** includes draft conversion, title/description editing, and reviewer requests. **Account…** includes code snippet sharing and token removal.
+
+Git transfers still use your system Git credential helper or SSH agent; the hosting API token is separate. **File → Clone Repository** uses the same Git authentication. **Terminal** starts your configured login shell at the repository path, retains sessions when switching tabs/repositories, and terminates its sessions when the window closes. Commands entered in Terminal run with your user account’s normal permissions.
+
 ## Development
 
 ```sh
@@ -123,7 +135,7 @@ swift build
 codesign --verify --deep --strict dist/GitDesk.app
 ```
 
-`scripts/test.sh` runs a dependency-free regression executable, using temporary repositories and a local bare remote. It does not need XCTest, contact a network remote, or operate on existing repositories. Use this script rather than `swift test`; the checks are an executable target, not an XCTest target.
+`scripts/test.sh` runs core and UI regression executables, using temporary repositories, a local bare remote, mocked hosting HTTP responses, and an actual local PTY. It does not need XCTest, contact a network remote during checks, or operate on existing repositories. The first build downloads the pinned Swift packages. Use this script rather than `swift test`; the checks are an executable target, not an XCTest target.
 
 GitHub Actions runs these checks and bundles the app on Apple Silicon and Intel macOS runners. CI bundles are development artifacts for the corresponding architecture, not notarized releases.
 

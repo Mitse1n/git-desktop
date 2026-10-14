@@ -6,9 +6,6 @@ final class LogSubjectCell: NSView, LogExpandableCell {
   var showTagNames = false
   var referencesOnLeft = false
   var dimMerge = true
-  var graph: GraphRow?
-  var graphColumnWidth: CGFloat = 0
-  var isHead = false
   var commit: Commit? {
     didSet {
       needsDisplay = true
@@ -32,8 +29,7 @@ final class LogSubjectCell: NSView, LogExpandableCell {
       ?? refs.first { !$0.hasPrefix("tag: ") } ?? refs.first
     var visible = compactReferences ? primary.map { [$0] } ?? [] : refs
     if showTagNames { visible += refs.filter { $0.hasPrefix("tag: ") && !visible.contains($0) } }
-    let messageStart = 5 + max(0, (graph.map { GraphCell.requiredWidth(lanes: $0.laneCount) } ?? 0) - graphColumnWidth)
-    var left = messageStart
+    var left: CGFloat = 5
     for name in visible.reversed() {
       let fullName = name.replacingOccurrences(of: "HEAD -> ", with: "").replacingOccurrences(
         of: "tag: ", with: "")
@@ -42,14 +38,14 @@ final class LogSubjectCell: NSView, LogExpandableCell {
       let stacked = compactReferences && (refs.count > 1 || name.hasPrefix("HEAD -> "))
       let iconWidth: CGFloat = stacked ? 22 : 17
       let width = min(210, (clean as NSString).size(withAttributes: attrs).width + iconWidth)
-      if right - width - left < 70 { break }
+      if right - width < 70 { break }
       let rect = NSRect(x: referencesOnLeft ? left : right - width, y: 5, width: width, height: 18)
       badges.append(ReferenceBadge(name: name, title: clean, rect: rect,
         iconWidth: iconWidth, stacked: stacked))
-      if referencesOnLeft { left += width + 5 } else { right -= width + 5 }
+      right -= width + 5
+      left += width + 5
     }
-    let messageX = referencesOnLeft ? left : messageStart
-    return (badges, NSRect(x: messageX, y: 6, width: max(0, right - messageX - 5), height: 18))
+    return (badges, NSRect(x: referencesOnLeft ? left : 5, y: 6, width: max(0, right - 10), height: 18))
   }
   var hoverText: LogHoverText? {
     guard let commit else { return nil }
@@ -59,14 +55,6 @@ final class LogSubjectCell: NSView, LogExpandableCell {
   }
   override func draw(_ dirtyRect: NSRect) {
     guard let commit else { return }
-    // The graph has a small shared base column; wider rows continue into
-    // the subject cell. Only this row's text moves, like IDEA's log renderer.
-    if let graph {
-      NSGraphicsContext.saveGraphicsState()
-      bounds.clip()
-      GraphCell.draw(graph, isHead: isHead, height: bounds.height, offsetX: -graphColumnWidth)
-      NSGraphicsContext.restoreGraphicsState()
-    }
     let layout = textLayout(for: commit)
     for badge in layout.badges {
       let rect = badge.rect
@@ -146,6 +134,8 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
   var pendingRefreshLogOnly = true
   var debounce: DispatchWorkItem?
   var watcher: Timer?
+  private var dateRefreshTimer: Timer?
+  private let logDateFormatter = LogDateFormatter()
   var conflictWindows: [ConflictWindowController] = []
   var diffWindows: [DiffWindowController] = []
   var revisionWindows: [RevisionBrowserWindowController] = []
@@ -153,6 +143,8 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
   let operationLabel = label("Rebase paused", color: Theme.yellow, size: 12)
   let split = GitSplitView()
   let branchOutline = BranchOutline()
+  var branchDeleteButton: ActionButton?
+  var branchCompareButton: ActionButton?
   var branchHeadButton: ActionButton?
   var branchFavoriteButton: ActionButton?
   let logTable = LogTable()
@@ -187,9 +179,15 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
   var logBody = Surface()
   var commitBody = Surface()
   var consoleBody = Surface()
+  var terminalBody = Surface()
+  var hostingBody = Surface()
+  let terminalWorkspace = TerminalWorkspace()
+  let hostingWorkspace = HostingWorkspace()
   var branchPanel: NSView!
   var logTab: ActionButton!
   var consoleTab: ActionButton!
+  var terminalTab: ActionButton!
+  var hostingTab: ActionButton!
   var commitTab: ActionButton!
   var commitButton: ActionButton!
   var commitSections: GitSplitView!
@@ -213,9 +211,6 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
   }
   var compactReferences = UserDefaults.standard.object(forKey: "logCompactReferences") as? Bool ?? true {
     didSet { UserDefaults.standard.set(compactReferences, forKey: "logCompactReferences") }
-  }
-  var showLongGraphEdges = UserDefaults.standard.bool(forKey: "logShowLongEdges") {
-    didSet { UserDefaults.standard.set(showLongGraphEdges, forKey: "logShowLongEdges") }
   }
   var showLogTagNames = UserDefaults.standard.bool(forKey: "logShowTagNames") {
     didSet { UserDefaults.standard.set(showLogTagNames, forKey: "logShowTagNames") }
@@ -265,6 +260,11 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     themeObserver = NotificationCenter.default.addObserver(forName: Theme.didChange, object: nil, queue: .main) {
       [weak self] _ in self?.updateThemeLayout()
     }
+    dateRefreshTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+      guard let self, self.view.window?.isVisible == true, !self.logTable.isHiddenOrHasHiddenAncestor else { return }
+      self.refreshLogDates()
+    }
+    dateRefreshTimer?.tolerance = 5
     watcher = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
       guard let self, self.repository != nil, !self.isBusy, !self.isRefreshing, !self.isLoadingMoreHistory, self.debounce == nil,
         self.view.window?.attachedSheet == nil, NSApp.modalWindow == nil
@@ -273,7 +273,9 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     }
   }
   deinit {
+    terminalWorkspace.shutdown()
     watcher?.invalidate()
+    dateRefreshTimer?.invalidate()
     if let themeObserver { NotificationCenter.default.removeObserver(themeObserver) }
   }
   private func updateThemeLayout() {
@@ -314,9 +316,11 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     mainBody.translatesAutoresizingMaskIntoConstraints = false
     view.addSubview(mainBody)
     logTab = ActionButton("Log") { [weak self] in self?.setMode("Log") }
+    terminalTab = ActionButton("Terminal") { [weak self] in self?.setMode("Terminal") }
+    hostingTab = ActionButton("Reviews") { [weak self] in self?.setMode("Reviews") }
     consoleTab = ActionButton("Console") { [weak self] in self?.setMode("Console") }
     commitTab = ActionButton("Commit") { [weak self] in self?.setMode("Commit") }
-    for tab in [logTab, consoleTab, commitTab] { tab?.isTab = true }
+    for tab in [logTab, consoleTab, commitTab, terminalTab, hostingTab] { tab?.isTab = true }
     let tabSpacer = NSView()
     operationControls = row([
       operationLabel,
@@ -332,7 +336,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     operationControls.isHidden = true
     let tabs = row(
       [
-        sectionTitle, logTab, consoleTab, commitTab, tabSpacer, operationControls,
+        sectionTitle, logTab, consoleTab, commitTab, terminalTab, hostingTab, tabSpacer, operationControls,
         ActionButton(symbol: "arrow.clockwise", tooltip: "Refresh (⌘R)") { [weak self] in
           self?.refresh()
         },
@@ -342,7 +346,8 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     buildLog()
     buildCommit()
     buildConsole()
-    for body in [logBody, commitBody, consoleBody] {
+    buildHosting()
+    for body in [logBody, commitBody, consoleBody, terminalBody, hostingBody] {
       body.translatesAutoresizingMaskIntoConstraints = false
       mainBody.addSubview(body)
       NSLayoutConstraint.activate([
@@ -397,6 +402,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     branchOutline.addTableColumn(branchColumn)
     branchOutline.outlineTableColumn = branchColumn
     configureTable(branchOutline)
+    branchOutline.allowsMultipleSelection = true
     branchOutline.columnAutoresizingStyle = .noColumnAutoresizing
     branchOutline.autoresizesOutlineColumn = false
     branchOutline.contentWidthForItem = { [weak self] item in
@@ -430,8 +436,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
       }),
       (
         "star", "Mark/Unmark As Favorite", { [weak self] in
-          guard let self, let branch = self.selectedBranch else { return }
-          self.toggleFavorite(branch)
+          self?.toggleSelectedBranchFavorites()
         }
       ), ("scope", "Navigate Log to Selected Branch Head", { [weak self] in
         self?.navigateSelectedBranchHead()
@@ -450,6 +455,14 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
       let button = ActionButton(symbol: icon, tooltip: title, size: 26, action: action)
       if icon == "gearshape" {
         button.handler = { [weak self, weak button] in self?.branchViewOptions(anchor: button) }
+      }
+      if icon == "trash" {
+        branchDeleteButton = button
+        button.isEnabled = false
+      }
+      if icon == "arrow.left.arrow.right" {
+        branchCompareButton = button
+        button.isEnabled = false
       }
       if icon == "scope" {
         branchHeadButton = button
@@ -593,6 +606,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     emptyLabel.identifier = .init("EmptyLog")
     split.addArrangedSubview(makePanel(filterBar, body: logArea, height: 34))
     configureTable(filesTable)
+    filesTable.allowsMultipleSelection = true
     filesTable.dataSource = self
     filesTable.delegate = self
     filesTable.addTableColumn(NSTableColumn(identifier: .init("file")))
@@ -715,7 +729,11 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     logBody.isHidden = mode != "Log"
     commitBody.isHidden = mode != "Commit"
     consoleBody.isHidden = mode != "Console"
-    for (name, button) in [("Log", logTab), ("Console", consoleTab), ("Commit", commitTab)] {
+    terminalBody.isHidden = mode != "Terminal"
+    hostingBody.isHidden = mode != "Reviews"
+    if mode == "Terminal" { terminalWorkspace.activate(at: repository?.workingDirectory) }
+    if mode == "Reviews" { hostingWorkspace.configure(repository: repository) }
+    for (name, button) in [("Log", logTab), ("Console", consoleTab), ("Commit", commitTab), ("Terminal", terminalTab), ("Reviews", hostingTab)] {
       button?.contentTintColor = mode == name ? Theme.blue : Theme.text
       button?.isBordered = mode == name
     }
@@ -734,6 +752,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
   }
   func open(_ url: URL) {
     guard !isBusy else { return }
+    guard !hostingWorkspace.isWriting else { statusLabel.stringValue = "Wait for the hosting operation to finish before switching repositories."; return }
     amend.state = .off
     amendChanged()
     epoch += 1
@@ -772,7 +791,6 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     isBusy = true
     progress.startAnimation(nil)
     statusLabel.stringValue = "Opening \(url.lastPathComponent)…"
-    let showLongEdges = showLongGraphEdges
     let showIgnored = showIgnoredFiles
     queue.async { [weak self] in
       do {
@@ -785,13 +803,16 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
           }
         }
         let data = try repo.snapshot(filter: openingFilter)
-        let presentation = RepositoryHistoryPresentation.prepare(data, showLongEdges: showLongEdges)
+        let presentation = RepositoryHistoryPresentation.prepare(data)
         let ignored = showIgnored ? try repo.ignoredPaths() : []
         let modules = CommitModule.discover(in: repo.workingDirectory)
         let userEmail = (try? repo.run(["config", "user.email"]).trimmingCharacters(in: .whitespacesAndNewlines)) ?? ""
         DispatchQueue.main.async {
           guard let self, self.epoch == currentEpoch else { return }
           self.repository = repo
+          self.terminalWorkspace.repositoryURL = repo.workingDirectory
+          if self.mode == "Terminal" { self.terminalWorkspace.activate(at: repo.workingDirectory) }
+          if self.mode == "Reviews" { self.hostingWorkspace.configure(repository: repo) }
           self.loadedLogFilter = openingFilter
           self.snapshot = data
           self.ignoredPaths = self.showIgnoredFiles ? ignored : []
@@ -840,7 +861,6 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     let currentEpoch = epoch
     let filter = self.filter
     let previous = logOnly ? snapshot : nil
-    let showLongEdges = showLongGraphEdges
     let showIgnored = showIgnoredFiles
     let previousIgnored = ignoredPaths
     let previousModules = commitModules
@@ -861,7 +881,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
         let ignored = previous != nil ? previousIgnored : (showIgnored ? try repo.ignoredPaths() : [])
         let modules = previous != nil ? previousModules : CommitModule.discover(in: repo.workingDirectory)
         let changed = priorSnapshot != data || previousIgnored != ignored || previousModules != modules
-        let presentation = RepositoryHistoryPresentation.prepare(data, reusing: priorPresentation, showLongEdges: showLongEdges)
+        let presentation = RepositoryHistoryPresentation.prepare(data, reusing: priorPresentation)
         DispatchQueue.main.async {
           guard let self else { return }
           self.isRefreshing = false
@@ -963,12 +983,12 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     let selectedHashes = Set(logTable.selectedRowIndexes.compactMap { index in
       displayedLogCommits.indices.contains(index) ? displayedLogCommits[index].hash : nil
     })
-    let prepared = presentation.flatMap { $0.showLongEdges == showLongGraphEdges ? $0 : nil }
-      ?? RepositoryHistoryPresentation.prepare(data, reusing: historyPresentation, showLongEdges: showLongGraphEdges)
+    let prepared = presentation ?? RepositoryHistoryPresentation.prepare(data, reusing: historyPresentation)
     assert(prepared.matches(data))
     historyPresentation = prepared
     graphs = prepared.graphs
-    logTable.graphWidth = GraphCell.requiredWidth(lanes: min(10, CommitGraph.recommendedLaneCount(graphs)))
+    logTable.graphLaneCounts = graphs.map(\.laneCount)
+    logTable.graphWidth = CGFloat(min(10, CommitGraph.recommendedLaneCount(graphs))) * 15 + 8
     logTable.authorWidth = min(140, max(80, data.commits.map {
       ($0.author as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 13, weight: .semibold)]).width + 12
     }.max() ?? 80))
@@ -1043,10 +1063,13 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
   }
   func rebuildBranches() {
     guard let data = snapshot else { return }
-    let previousSelection = selectedBranch?.fullRef
+    var previousSelection = Set<String>()
     func remember(_ nodes: [BranchNode], path: String = "") {
       for node in nodes {
         let key = path + "/" + node.title
+        if branchOutline.selectedRowIndexes.contains(branchOutline.row(forItem: node)) {
+          previousSelection.insert(node.branch?.fullRef ?? "group:" + key)
+        }
         branchExpansionState[key] = branchOutline.isItemExpanded(node)
         remember(node.children, path: key)
       }
@@ -1057,9 +1080,11 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
       grouped: groupBranches, showTags: showTags)
     branchNodes = nodes
     branchOutline.reloadData()
+    var selectedNodes: [BranchNode] = []
     func restore(_ nodes: [BranchNode], path: String = "") {
       for node in nodes {
         let key = path + "/" + node.title
+        if previousSelection.contains(node.branch?.fullRef ?? "group:" + key) { selectedNodes.append(node) }
         if !branchesLoaded || branchExpansionState[key] ?? true { branchOutline.expandItem(node) }
         restore(node.children, path: key)
       }
@@ -1067,13 +1092,8 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     restore(nodes)
     branchesLoaded = true
     branchOutline.deselectAll(nil)
-    if let index = (0..<branchOutline.numberOfRows).first(where: {
-      (branchOutline.item(atRow: $0) as? BranchNode)?.branch.map {
-        $0.fullRef == previousSelection
-      } == true
-    }) {
-      branchOutline.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
-    }
+    let selection = IndexSet(selectedNodes.map { branchOutline.row(forItem: $0) }.filter { $0 >= 0 })
+    branchOutline.selectRowIndexes(selection, byExtendingSelection: false)
     branchOutline.fitContentWidth()
     if let clip = branchOutline.enclosingScrollView?.contentView {
       clip.scroll(to: NSPoint(x: clip.bounds.minX, y: clip.bounds.minY))
@@ -1140,7 +1160,6 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     let view = SelectionRow()
     if tableView == logTable { view.isHovered = row == logTable.hoveredRow }
     view.usesInactiveColor = tableView != logTable && tableView != changesTable
-    if tableView == changesTable { view.cornerRadius = 3 }
     if tableView == logTable, shouldHighlightCurrentBranch,
       let commits = snapshot?.commits, row < commits.count,
       currentBranchHistory.contains(commits[row].hash) {
@@ -1167,9 +1186,6 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
         cell.showTagNames = showLogTagNames
         cell.referencesOnLeft = referencesOnLeft
         cell.dimMerge = highlightMergeCommits
-        cell.graph = graphs[rowIndex]
-        cell.graphColumnWidth = logTable.graphWidth
-        cell.isHead = commit.decorations.contains { $0 == "HEAD" || $0.hasPrefix("HEAD -> ") }
         cell.commit = commit
         return cell
       }
@@ -1180,12 +1196,27 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
         }
         return cell
       }
-      let format = DateFormatter()
-      format.locale = Locale(identifier: "en_US_POSIX")
-      format.dateFormat = "yyyy/M/d HH:mm"
-      return logMetadataCell(format.string(from: commit.date), color: highlightMergeCommits && commit.parents.count > 1 ? Theme.muted : Theme.text)
+      let cell = logMetadataCell(logDateFormatter.string(commit.date), color: highlightMergeCommits && commit.parents.count > 1 ? Theme.muted : Theme.text)
+      cell.toolTip = logDateFormatter.absolute(commit.date)
+      return cell
     }
     return workingCell(at: rowIndex)
+  }
+  /// Update existing date cells without reloading the graph, selection or files.
+  func refreshLogDates(now: Date = Date()) {
+    guard let dateColumn = logTable.tableColumns.firstIndex(where: { $0.identifier.rawValue == "date" }),
+      let commits = snapshot?.commits else { return }
+    let visible = logTable.rows(in: logTable.visibleRect)
+    guard visible.location != NSNotFound, visible.length > 0 else { return }
+    var changed = false
+    for index in visible.location..<min(commits.count, visible.location + visible.length) {
+      guard let cell = logTable.view(atColumn: dateColumn, row: index, makeIfNecessary: false) as? LogMetadataCell,
+        let field = cell.textField else { continue }
+      let text = logDateFormatter.string(commits[index].date, now: now)
+      if field.stringValue != text { field.stringValue = text; changed = true }
+      cell.toolTip = logDateFormatter.absolute(commits[index].date)
+    }
+    if changed { logTable.dismissTextExpansion() }
   }
   func cellText(_ text: String, color: NSColor = Theme.text, size: CGFloat = 13) -> NSTableCellView {
     let cell = NSTableCellView()
@@ -1261,7 +1292,10 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     }
   }
   var selectedDetailFiles: [FileChange] {
-    filesTable.selectedRowIndexes.flatMap { (filesTable.item(atRow: $0) as? FileNode)?.files ?? [] }
+    let paths = Set(filesTable.selectedRowIndexes.flatMap {
+      (filesTable.item(atRow: $0) as? FileNode)?.files.map(\.path) ?? []
+    })
+    return detailFiles.filter { paths.contains($0.path) }
   }
   func tableViewSelectionDidChange(_ notification: Notification) {
     guard let table = notification.object as? NSTableView else { return }
@@ -1311,9 +1345,11 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
   }
   func outlineViewSelectionDidChange(_ notification: Notification) {
     if notification.object as? NSOutlineView === branchOutline {
+      branchDeleteButton?.isEnabled = !selectedBranches.isEmpty && !selectedBranches.contains(where: \.current)
+      branchCompareButton?.isEnabled = selectedBranch.map { !$0.current } ?? false
       branchHeadButton?.isEnabled = selectedBranchRevision != nil
-      branchFavoriteButton?.isEnabled = selectedBranch != nil
-      branchFavoriteButton?.contentTintColor = selectedBranch.map { favoriteRefs.contains($0.fullRef) } == true
+      branchFavoriteButton?.isEnabled = !selectedBranches.isEmpty
+      branchFavoriteButton?.contentTintColor = !selectedBranches.isEmpty && selectedBranches.allSatisfy { favoriteRefs.contains($0.fullRef) }
         ? Theme.yellow : Theme.text
     }
   }
@@ -1336,19 +1372,17 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
   {
     if let node = item as? FileNode {
       let cell = NSTableCellView()
-      let icon = NSImageView()
       let file = node.file
-      icon.image = NSImage(
-        systemSymbolName: file == nil ? "folder" : "doc",
-        accessibilityDescription: file?.status ?? "Folder")
-      icon.contentTintColor =
-        file?.status == "Added"
-        ? Theme.green
+      let icon: NSImageView = file.map { FileTypeImageView(path: $0.path) }
+        ?? NSImageView(image: NSImage(systemSymbolName: "folder", accessibilityDescription: "Folder")!)
+      if file == nil { icon.contentTintColor = Theme.text }
+      let color = file?.status == "Added" ? Theme.green
         : file?.status == "Deleted" ? Theme.red : file == nil ? Theme.text : Theme.blue
-      let text = label(node.title, color: icon.contentTintColor ?? Theme.text)
+      let text = label(node.title, color: color)
       text.toolTip = file?.path
       icon.translatesAutoresizingMaskIntoConstraints = false
-      icon.widthAnchor.constraint(equalToConstant: 14).isActive = true
+      icon.widthAnchor.constraint(equalToConstant: 16).isActive = true
+      icon.heightAnchor.constraint(equalToConstant: 16).isActive = true
       var contents: [NSView] = [icon, text]
       if file == nil {
         contents.append(label("\(node.count) " + (node.count == 1 ? "file" : "files"), color: Theme.muted))
@@ -1393,18 +1427,24 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
   }
   func outlineView(_ outlineView: NSOutlineView, rowViewForItem item: Any) -> NSTableRowView? {
     let row = SelectionRow()
-    row.usesHoverShapeForSelection = outlineView === branchOutline || outlineView === filesTable
     if outlineView === branchOutline {
       row.hoverColor = Theme.inactiveSelection
       row.isHovered = branchOutline.row(forItem: item) == branchOutline.hoveredRow
     }
     return row
   }
+  var selectedBranches: [Branch] {
+    branchOutline.selectedRowIndexes.compactMap {
+      (branchOutline.item(atRow: $0) as? BranchNode)?.branch
+    }
+  }
   var selectedBranch: Branch? {
-    (branchOutline.item(atRow: branchOutline.selectedRow) as? BranchNode)?.branch
+    guard branchOutline.selectedRowIndexes.count == 1 else { return nil }
+    return selectedBranches.first
   }
   var selectedBranchRevision: String? {
-    guard let node = branchOutline.item(atRow: branchOutline.selectedRow) as? BranchNode else { return nil }
+    guard branchOutline.selectedRowIndexes.count == 1,
+      let node = branchOutline.item(atRow: branchOutline.selectedRow) as? BranchNode else { return nil }
     return node.branch?.fullRef ?? (node.title == "HEAD (Current Branch)" ? "HEAD" : nil)
   }
   func navigateSelectedBranchHead() {
@@ -1440,7 +1480,9 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
       selectedDetailFiles.first.flatMap { file in detailFiles.firstIndex { $0.path == file.path } }
       ?? 0
     guard i < detailFiles.count else { return }
-    openDiff(files: detailFiles, index: i, commit: commit, comparison: comparison)
+    let selected = selectedDetailFiles
+    let files = selected.count > 1 ? selected : detailFiles
+    openDiff(files: files, index: selected.count > 1 ? 0 : i, commit: commit, comparison: comparison)
   }
   @objc func showWorkingDiff() {
     let files = snapshot?.changes ?? []
@@ -1448,7 +1490,8 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     let i =
       workingSelection().first.flatMap { file in files.firstIndex { $0.path == file.path } } ?? 0
     guard i < files.count else { return }
-    openDiff(files: files, index: i)
+    let selected = workingSelection()
+    openDiff(files: selected.count > 1 ? selected : files, index: selected.count > 1 ? 0 : i)
   }
   func openDiff(
     files: [FileChange], index: Int, commit: Commit? = nil, comparison: (String, String)? = nil

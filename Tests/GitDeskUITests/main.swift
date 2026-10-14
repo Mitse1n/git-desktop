@@ -2,7 +2,7 @@ import AppKit
 import GitDeskCore
 
 defer {
-  do { try runHistoryPaginationChecks(); try runFlowChecks() }
+  do { try runHistoryPaginationChecks(); try runFlowChecks(); try runHostingChecks() }
   catch { print(error.localizedDescription); exit(1) }
 }
 
@@ -100,83 +100,13 @@ do {
         && abs(actual.blueComponent - expected.blueComponent) < 0.025
     }
     let branch = Theme.graph[rows[1].color % Theme.graph.count]
-    precondition(matches(pixel(34, 20), branch), "The side-branch dot uses its branch color")
-    precondition(matches(pixel(34, 10), branch), "The side-branch line matches its dot in " + theme.title)
+    precondition(matches(pixel(31, 20), branch), "The side-branch dot uses its branch color")
+    precondition(matches(pixel(31, 10), branch), "The side-branch line matches its dot in " + theme.title)
     precondition(matches(pixel(16, 10), Theme.graph[rows[0].color % Theme.graph.count]),
       "A main connection passing through a side-branch row keeps its own color")
   }
   print("Graph rendering: branch dots/lines and passing main connections match in all four themes")
 }
-// Render a merge train through the real table/cell delegates, including
-// graph overflow into the subject cell and the compact/long-edge switch.
-do {
-  let originalTheme = Theme.current
-  defer { Theme.current = originalTheme }
-  Theme.current = .dark
-  var commits = (0..<8).map { Commit(hash: "m\($0)", parents: ["m\($0 + 1)", "side\($0)"],
-    author: "Junio C Hamano", subject: "Merge branch 'topic-\($0)' into seen") }
-  commits += [Commit(hash: "side0", parents: ["side0-old"], author: "Beat Bolli", subject: "imap-send: verify the hostname"),
-    Commit(hash: "side0-old", parents: ["root"], author: "Beat Bolli", subject: "imap-send: use the recommended TLS method"),
-    Commit(hash: "side1", parents: ["root"], author: "Beat Bolli", subject: "unicode: update the width tables")]
-  for index in 8..<40 {
-    commits.append(Commit(hash: "m\(index)", parents: [index == 39 ? "root" : "m\(index + 1)"],
-      author: "Junio C Hamano", subject: "Main-line change \(index)"))
-    if index < 12 {
-      commits.append(Commit(hash: "side\(index - 6)", parents: ["root"], author: "Contributor", subject: "Topic change \(index - 6)"))
-    }
-  }
-  for index in 6...7 {
-    commits.append(Commit(hash: "side\(index)", parents: ["root"], author: "Contributor", subject: "Topic change \(index)"))
-  }
-  commits.append(Commit(hash: "root", parents: [], author: "Contributor", subject: "Root"))
-  let controller = RepositoryController()
-  _ = controller.view
-  let savedPreference = controller.showLongGraphEdges
-  defer { controller.showLongGraphEdges = savedPreference }
-  controller.showLongGraphEdges = false
-  let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 1100, height: 520))
-  scroll.documentView = controller.logTable
-  let window = NSWindow(contentRect: scroll.frame, styleMask: .borderless, backing: .buffered, defer: false)
-  window.isReleasedWhenClosed = false
-  window.contentView = scroll
-  defer { window.close() }
-  controller.snapshot = RepositorySnapshot(branches: [], commits: commits, changes: [], currentBranch: "seen",
-    remotes: [], stashes: [], operation: nil)
-  controller.updateUI()
-  controller.logTable.layoutSubtreeIfNeeded()
-  let baseWidth = controller.logTable.graphWidth
-  let wideRow = controller.graphs.indices.max { controller.graphs[$0].laneCount < controller.graphs[$1].laneCount }!
-  let subject = controller.tableView(controller.logTable, viewFor: controller.logTable.tableColumns[1], row: wideRow) as! LogSubjectCell
-  subject.frame = NSRect(x: 0, y: 0, width: 650, height: 26)
-  precondition(subject.hoverText!.rect.minX >= GraphCell.requiredWidth(lanes: controller.graphs[wideRow].laneCount) - baseWidth,
-    "Wide graph rows move only their own subject and hover hit area")
-  controller.logTable.selectRowIndexes(IndexSet([2, 4]), byExtendingSelection: false)
-  func render(_ name: String) throws {
-    scroll.layoutSubtreeIfNeeded()
-    let bitmap = scroll.bitmapImageRepForCachingDisplay(in: scroll.bounds)!
-    scroll.cacheDisplay(in: scroll.bounds, to: bitmap)
-    try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: ".build/" + name + ".png"))
-  }
-  try render("graph-compact")
-  func drainGraph() {
-    var done = false
-    controller.queue.async { DispatchQueue.main.async { done = true } }
-    let deadline = Date().addingTimeInterval(20)
-    while !done && Date() < deadline { RunLoop.current.run(until: Date().addingTimeInterval(0.01)) }
-    precondition(done)
-  }
-  let origin = scroll.contentView.bounds.origin
-  controller.toggleLongGraphEdges(); drainGraph()
-  precondition(controller.historyPresentation!.showLongEdges)
-  precondition(controller.logTable.selectedRowIndexes == IndexSet([2, 4]))
-  precondition(scroll.contentView.bounds.origin == origin)
-  try render("graph-long-edges")
-  controller.toggleLongGraphEdges(); drainGraph()
-  precondition(!controller.historyPresentation!.showLongEdges)
-  precondition(controller.logTable.graphWidth == baseWidth)
-  precondition(controller.logTable.selectedRowIndexes == IndexSet([2, 4]))
-  print("Compact graph: per-row subject/hover geometry, real table rendering, async mode switch, selection and viewport passed")
-} catch { print(error); exit(1) }
 final class LogResizeDataSource: NSObject, NSTableViewDataSource {
   func numberOfRows(in tableView: NSTableView) -> Int { 20 }
   func tableView(_ tableView: NSTableView, objectValueFor tableColumn: NSTableColumn?, row: Int) -> Any? { nil }
@@ -557,3 +487,133 @@ do {
   print("FAIL Conflict editor: " + error.localizedDescription)
   exit(1)
 }
+
+// Validate the actual filled contour at every selected-row boundary. Neighbor
+// flags are AppKit's; changing them must also invalidate an already visible row.
+do {
+  let selection = SelectionRow(frame: NSRect(x: 0, y: 0, width: 200, height: 25))
+  let selectionWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 25),
+    styleMask: [.borderless], backing: .buffered, defer: false)
+  selectionWindow.isReleasedWhenClosed = false
+  selectionWindow.contentView!.addSubview(selection)
+  defer { selectionWindow.close() }
+  selection.isSelected = true
+  precondition(!selection.selectionShape.contains(NSPoint(x: 4.1, y: 0.1)))
+  precondition(!selection.selectionShape.contains(NSPoint(x: 195.9, y: 24.9)))
+  selection.needsDisplay = false
+  selection.isNextRowSelected = true
+  precondition(selection.selectionShape.contains(NSPoint(x: 4.1, y: 24.9)))
+  precondition(selection.selectionShape.contains(NSPoint(x: 195.9, y: 24.9)))
+  selection.isPreviousRowSelected = true
+  precondition(selection.selectionShape.contains(NSPoint(x: 4.1, y: 0.1)))
+  precondition(selection.selectionShape.contains(NSPoint(x: 195.9, y: 0.1)))
+  selection.isNextRowSelected = false
+  precondition(!selection.selectionShape.contains(NSPoint(x: 4.1, y: 24.9)))
+  precondition(selection.selectionShape.contains(NSPoint(x: 4.1, y: 0.1)))
+  selection.isPreviousRowSelected = false
+  precondition(!selection.selectionShape.contains(NSPoint(x: 4.1, y: 0.1)))
+}
+print("Selection contours: rounded isolated rows, straight adjacent edges, both ends and live neighbor invalidation passed")
+
+// Selection must not punch a plain-background border into a tinted branch row.
+do {
+  let originalTheme = Theme.current
+  defer { Theme.current = originalTheme }
+  let row = SelectionRow(frame: NSRect(x: 0, y: 0, width: 200, height: 25))
+  let window = NSWindow(contentRect: row.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+  window.isReleasedWhenClosed = false
+  window.contentView!.addSubview(row)
+  defer { window.close() }
+  row.selectionHighlightStyle = .regular
+  row.isEmphasized = true
+  func sample(_ x: Int, _ y: Int) -> NSColor {
+    let bitmap = row.bitmapImageRepForCachingDisplay(in: row.bounds)!
+    row.cacheDisplay(in: row.bounds, to: bitmap)
+    return bitmap.colorAt(x: x * bitmap.pixelsWide / 200, y: y * bitmap.pixelsHigh / 25)!.usingColorSpace(.sRGB)!
+  }
+  for theme in AppTheme.allCases {
+    Theme.current = theme
+    window.appearance = theme.appearance
+    row.backgroundColor = Theme.background
+    row.backgroundTint = Theme.currentBranchBackground
+    row.isSelected = false
+    let margin = sample(1, 12), corner = sample(4, 0)
+    row.isSelected = true
+    precondition(sample(1, 12) == margin && sample(4, 0) == corner,
+      "Rounded commit selection must retain the underlying branch tint")
+    precondition(sample(100, 12) != margin, "The center still uses selection color")
+  }
+}
+print("Tinted commit selection: branch backgrounds survive outside selection corners in all four themes")
+
+do {
+  let formatter = LogDateFormatter()
+  let iso = ISO8601DateFormatter()
+  func date(_ value: String) -> Date { iso.date(from: value)! }
+  var calendar = Calendar(identifier: .gregorian)
+  calendar.timeZone = TimeZone(identifier: "Asia/Shanghai")!
+  let now = date("2026-10-13T16:00:00+08:00")
+  for (seconds, expected) in [(0.0, "Moments ago"), (30, "Moments ago"),
+    (31, "A minute ago"), (60, "A minute ago"), (90, "2 minutes ago"),
+    (300, "5 minutes ago"), (3540, "59 minutes ago"), (3570, "1 hour ago"),
+    (3600, "1 hour ago"), (3660, "1 hour ago"), (3661, "Today 14:58")] {
+    precondition(formatter.string(now.addingTimeInterval(-seconds), now: now, calendar: calendar) == expected,
+      "IDEA recent-time rounding and 61-minute boundary: \(seconds)")
+  }
+  for (timestamp, expected) in [
+    ("2026-10-13T09:00:00+08:00", "Today 09:00"),
+    ("2026-10-12T14:53:00+08:00", "Yesterday 14:53"),
+    ("2026-10-08T15:36:00+08:00", "2026/10/8 15:36"),
+    ("2026-10-13T17:00:00+08:00", "Today 17:00"),
+    ("2026-10-14T17:00:00+08:00", "2026/10/14 17:00")] {
+    precondition(formatter.string(date(timestamp), now: now, calendar: calendar) == expected)
+  }
+  precondition(formatter.string(date("2025-12-31T14:53:00+08:00"),
+    now: date("2026-01-01T16:00:00+08:00"), calendar: calendar) == "Yesterday 14:53")
+  precondition(formatter.string(date("2025-12-31T23:55:00+08:00"),
+    now: date("2026-01-01T00:10:00+08:00"), calendar: calendar) == "15 minutes ago")
+  calendar.timeZone = TimeZone(identifier: "America/New_York")!
+  precondition(formatter.string(date("2026-03-08T00:45:00-05:00"),
+    now: date("2026-03-09T00:30:00-04:00"), calendar: calendar) == "Yesterday 00:45")
+  precondition(formatter.string(Date(timeIntervalSince1970: -1), now: now, calendar: calendar).isEmpty)
+}
+print("Log dates: IDEA minute rounding, today/yesterday, absolute dates, future timestamps, year rollover and daylight saving passed")
+
+// The terminal is a real PTY: exercise cwd, ANSI/Unicode, resize, Ctrl-C,
+// independent sessions, and process cleanup without reading user shell profiles.
+do {
+  let root = FileManager.default.temporaryDirectory.appendingPathComponent("gitdesk terminal ' " + UUID().uuidString)
+  try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: root) }
+  let workspace = TerminalWorkspace(frame: NSRect(x: 0, y: 0, width: 800, height: 450))
+  let window = NSWindow(contentRect: workspace.frame, styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+  window.isReleasedWhenClosed = false; window.contentView = workspace
+  defer { workspace.shutdown(); window.close() }
+  workspace.repositoryURL = root
+  window.contentView!.layoutSubtreeIfNeeded()
+  workspace.newSession(executable: "/bin/sh", arguments: [])
+  let terminal = workspace.activeTerminal!
+  func send(_ string: String) { let bytes = Array(string.utf8); terminal.send(source: terminal, data: bytes[...]) }
+  func text() -> String { String(decoding: terminal.getTerminal().getBufferAsData(), as: UTF8.self).replacingOccurrences(of: "\0", with: "") }
+  func waitFor(_ condition: () -> Bool) {
+    let deadline = Date().addingTimeInterval(8)
+    while !condition() && Date() < deadline { RunLoop.current.run(until: Date().addingTimeInterval(0.01)) }
+    if !condition() { FileHandle.standardError.write(Data(("PTY timeout: " + text() + "\n").utf8)) }
+    precondition(condition(), "PTY operation timed out")
+  }
+  send("printf '\\033[31mPTY_%s\\033[0m\\n' READY; pwd; printf '\\344\\270\\255\\346\\226\\207\\n'\r")
+  waitFor { text().contains("PTY_READY") && text().replacingOccurrences(of: "\n", with: "").contains(root.path) && text().contains("中文") }
+  let oldCols = terminal.getTerminal().cols
+  window.setContentSize(NSSize(width: 1000, height: 500)); workspace.layoutSubtreeIfNeeded()
+  waitFor { terminal.getTerminal().cols > oldCols }
+  send("sleep 30\r")
+  RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+  send("\u{3}printf 'INTERRUPT_%s\\n' OK\r")
+  waitFor { text().contains("INTERRUPT_OK") }
+  workspace.newSession(executable: "/bin/sh", arguments: [])
+  precondition(workspace.sessionCount == 2 && workspace.activeTerminal !== terminal && terminal.process.running)
+  workspace.shutdown()
+  waitFor { !terminal.process.running }
+  precondition(workspace.sessionCount == 0)
+}
+print("Embedded terminal: PTY cwd with special characters, ANSI/Unicode, resize, Ctrl-C, sessions and cleanup passed")

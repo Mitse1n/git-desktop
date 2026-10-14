@@ -202,7 +202,13 @@ final class BranchOutline: MenuOutline, ThemeUpdating {
     }
     if let clip = enclosingScrollView?.contentView {
       clip.postsBoundsChangedNotifications = true
-      observe(NSView.boundsDidChangeNotification, object: clip) {
+      var lastViewport = clip.bounds
+      observe(NSView.boundsDidChangeNotification, object: clip) { [weak clip] in
+        guard let clip else { return }
+        if clip.bounds.minX != lastViewport.minX || clip.bounds.width != lastViewport.width {
+          $0.invalidateViewportRows()
+        }
+        lastViewport = clip.bounds
         $0.dismissTextExpansion()
         $0.needsLayout = true
         $0.updateHoveredRow()

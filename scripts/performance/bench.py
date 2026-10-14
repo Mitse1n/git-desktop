@@ -130,7 +130,7 @@ def build(before_sources=None):
     bindir = Path(run(["swift", "build", "-c", "release", "--show-bin-path"], cwd=package))
     probe = bindir / "GitDeskPerfProbe"
     ui = sorted(p for p in (package / "Sources/GitDesk").glob("*.swift") if p.name != "main.swift")
-    objects = sorted((bindir / "GitDeskCore.build").glob("*.o"))
+    objects = sorted((bindir / "GitDeskCore.build").glob("*.o")) + sorted((bindir / "SwiftTerm.build").glob("*.o"))
     sp.run(["swiftc", "-O", "-I", str(bindir / "Modules"), *map(str, objects), *map(str, ui),
             str(PROJECT / "scripts/performance/main.swift"), "-o", str(probe)], cwd=PROJECT, check=True)
     return probe, temporary

@@ -9,7 +9,7 @@
 
 [English](README.md) · 简体中文
 
-在一个原生窗口里浏览提交历史、管理分支、选择文件提交和查看差异。交互参考 IntelliJ IDEA 的 Git 工具，底层调用系统 Git，无第三方包依赖。
+在一个原生窗口里浏览提交历史、管理分支、选择文件提交和查看差异。交互参考 IntelliJ IDEA 的 Git 工具，底层调用系统 Git，内嵌终端使用 SwiftTerm。
 
 **项目状态：早期开发。** 目前按下述步骤从源码构建。生成的应用使用本机 ad-hoc 签名，尚未进行 Developer ID 签名和公证。
 
@@ -19,14 +19,17 @@
 
 ## 功能
 
+- **内嵌 Terminal：**真实 VT100/xterm PTY，支持多个会话、仓库工作目录、ANSI 颜色、Unicode、窗口缩放、复制粘贴、Ctrl-C 和 shell 历史。Git Console 保留为独立的命令日志。
+- **GitHub / GitLab：**原生 PR/MR 列表、分页与本地筛选、描述、文件差异、本地完整 Diff、检出、创建/草稿、普通及行评论、讨论回复/解决、指定审核人、批准/请求修改、关闭/重开、合并/squash（GitHub 还支持 rebase）、CI 状态及 gist/项目 snippet 分享。支持 GitHub Enterprise 和自托管 GitLab，操作遵守服务端权限和分支保护。
+
 - **主题**：支持 Island Dark、Island Light、Light、Dark。在 GitDesk → Settings…（⌘,）→ Appearance 或 View → Theme 中切换，所有窗口即时更新并记住选择；Island 主题仅保留工具窗口外框圆角，内部面板使用平直布局和细分隔线。
 
-- **历史**：说明/作者/日期列之间可拖动调整宽度、提交行圆角悬浮高亮、被截断的说明/作者/日期悬浮展开（窗口内换行，超高时以 `...` 结尾）、分支点线同色、按完整祖先关系排列轨道（旧分支超出日志加载范围也保持正确）、连线接到提交点中心的彩色提交图、IDEA 风格紧凑轨道与逐行说明缩进（跨越 30 行及以上的长连线折叠为两端箭头，可在 Log 视图选项中切换 Long Edges）、分支和标签标记、当前分支专用图标、本地及 origin 的 main/master 默认收藏置顶、消息/哈希搜索、正则与大小写选项、分支/作者/日期/路径筛选、first-parent 模式。
+- **历史**：说明/作者/日期列之间可拖动调整宽度、提交行圆角悬浮高亮、被截断的说明/作者/日期悬浮展开（窗口内换行，超高时以 `...` 结尾）、分支点线同色、按完整祖先关系排列轨道（旧分支超出日志加载范围也保持正确）、连线接到提交点中心的彩色提交图、分支和标签标记、当前分支专用图标、本地及 origin 的 main/master 默认收藏置顶、消息/哈希搜索、正则与大小写选项、分支/作者/日期/路径筛选、first-parent 模式。
 - **历史操作**：撤销最新提交、修改最新或较早提交说明、父子提交跳转、补丁导出和只读历史文件树。原生交互式 rebase 编辑器支持排序、Pick、Reword、Squash、Fixup 和 Drop。
 - **分支**：分支树可上下及左右滚动，悬浮行显示灰底，被裁切的长名称浮层完整展开（在窗口内换行、超高时截断）；本地/远程分支和标签分组、收藏、切换、新建、重命名、删除、比较、merge、rebase 和 worktree。分支设置独立控制目录分组、标签显示，以及单击时筛选日志或跳到分支头。
 - **视图选项**：Log、分支、历史文件列表及 Commit 使用各自的菜单。Log 可切换紧凑引用、标签名称、引用位置、作者/日期列和高亮；历史文件可按目录/模块分组（Control-P/Control-M），显示或隐藏提交详情及文件数量。右侧栏上方为文件树、下方为紧凑的提交详情；双击文件或按 ⌘D 打开差异窗口。显示选项会保存，切换 Log 外观保留所选提交。
 - **提交**：可按目录或检测到的 IDEA 模块分组的变更树；点击或空格键勾选，分组支持半选状态。消息区可拖动调整大小，支持暂存/取消暂存、变更预览、amend、消息历史与 Commit and Push；小眼睛菜单可切换 Directory/Module 分组、显示忽略文件（忽略项不能勾选提交；右键可复制路径或在 Finder 中显示，差异、暂存、取消暂存及回滚禁用），模块分组读取 IDEA 模块配置，无配置时按仓库分组；提交设置支持指定作者及 Sign-off。普通选择文件提交通过临时 index 保留其他文件的暂存状态。
-- **差异**：双栏和 Unified、行号、差异导航、搜索、忽略空白和基础语法着色。
+- **差异**：双栏和 Unified、内置 JetBrains Mono Regular/Italic 编辑器字体、多语言语法着色（保留跨行注释/字符串状态）、行内变化强调和按完整变化块绘制的连续连接。双栏按各自真实行排列、联动滚动，行号固定，长行可横向滚动；新增/删除整份文件使用全宽单侧视图。XML 标签/字符串、Markdown 标题符号/斜体文字分别着色。忽略空白及搜索（⌘F）收进齿轮选项。文件列表支持 ⌘/Shift 多选，多文件差异可通过下拉菜单切换；代码行支持多选、⌘C 复制右侧及右键复制左右版本。F7/Shift-F7 导航差异，搜索逐次定位匹配，支持忽略空白。
 - **远程**：clone、fetch、仅 fast-forward 的 pull、push 和 remote 管理，复用已有 Git/SSH/credential helper 认证配置。
 
 - **仓库工具**：初始化和打开仓库、最近仓库、仓库级身份配置、stash、文本冲突处理、cherry-pick、revert、reset、继续/中止操作。
@@ -101,6 +104,7 @@ swift run GitDesk /tmp/gitdesk-demo
 | `⌘D` | 打开 Diff |
 | `⌥⌘N` | 新建分支 |
 | `⌘1` / `⌘2` | Log / Console |
+| `⌘3` / `⌘4` | Terminal / Reviews |
 
 打开仓库或选择最近项目会替换当前窗口里的项目。需要另一个独立项目窗口时，使用 **New Window**（`⌘N`）。双击提交只更新选择和详情，不弹出 Diff 窗口；可通过 **Show Diff** 或 `⌘D` 主动打开。
 
@@ -114,6 +118,14 @@ Rebase 要求工作区干净，最多编辑 10,000 条提交，暂不支持含 m
 
 普通和根提交可导出保留作者、说明的 Git 格式补丁，merge 提交导出相对第一父提交的二进制兼容差异。历史文件树无需 checkout；预览只读，单文件限 2 MB，不跟随符号链接或进入子模块。
 
+## 托管账号与终端
+
+打开 **Reviews → Connect Account**，选择 GitHub/GitLab、HTTPS 服务地址，输入个人访问令牌。应用调用 `/user` 验证账号，令牌仅保存在 macOS 钥匙串。GitHub 私有仓库通常需要 Pull requests 读写、Contents 读、Issues 读写；查看 CI 可能需要 Checks 读权限。草稿和讨论线程通过 GraphQL 操作，细粒度令牌可能不支持所有 GraphQL/gist 功能，界面会显示服务端返回的权限错误。GitLab 使用 `api` 范围令牌，审批功能取决于服务端版本和项目策略。
+
+选择远端、状态和 PR/MR 后，可以查看详情；双击变更文件或点 **Show Diff** 打开完整本地 Diff，在代码行右键选择评论。查看差异只 fetch 引用，不切换当前分支。**Check Out** 使用独立 review 分支，不覆盖已有工作。**Review…** 提供草稿切换、编辑标题/描述、指定审核人等操作；**Account…** 可分享代码片段或移除令牌。
+
+Git 传输仍使用系统 Git 的凭据助手或 SSH agent，与托管 API 令牌分开。**File → Clone Repository** 也使用系统 Git 认证。**Terminal** 在仓库目录启动配置的登录 shell，切换页面或仓库会保留会话，关闭窗口会终止对应终端会话。终端命令具有当前用户的正常权限。
+
 ## 开发与检查
 
 ```sh
@@ -123,7 +135,7 @@ swift build
 codesign --verify --deep --strict dist/GitDesk.app
 ```
 
-`scripts/test.sh` 使用独立临时仓库和本地 bare remote 运行回归检查，无需 XCTest，不连接网络远程，也不操作已有项目。请使用该脚本而非 `swift test`：检查以 executable target 实现。
+`scripts/test.sh` 使用独立临时仓库、本地 bare remote、模拟托管 HTTP 响应及真实本地 PTY 运行回归检查，无需 XCTest；检查不连接网络远程，也不操作已有项目。首次构建会下载锁定版本的 Swift 包。请使用该脚本而非 `swift test`：检查以 executable target 实现。
 
 GitHub Actions 会在 Apple Silicon 和 Intel macOS 上执行检查和应用打包。CI 包用于开发验证，架构与运行环境一致，未经公证。
 

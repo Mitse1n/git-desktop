@@ -16,7 +16,6 @@ extension RepositoryController {
     let pageToken = historyPageToken, currentEpoch = epoch, refreshToken = loadToken
     var expanded = loaded
     expanded.limit += historyPageSize
-    let showLongEdges = showLongGraphEdges
     let priorPresentation = historyPresentation
     statusLabel.stringValue = "Loading older commits…"
     queue.async { [weak self] in
@@ -24,7 +23,7 @@ extension RepositoryController {
         // Re-read a coherent prefix instead of concatenating offsets from moving
         // refs. New external commits cannot produce duplicate or missing rows.
         let data = try repo.snapshot(filter: expanded)
-        return (data, RepositoryHistoryPresentation.prepare(data, reusing: priorPresentation, showLongEdges: showLongEdges))
+        return (data, RepositoryHistoryPresentation.prepare(data, reusing: priorPresentation))
       }
       DispatchQueue.main.async {
         guard let self, self.epoch == currentEpoch, self.historyPageToken == pageToken else { return }
