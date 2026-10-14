@@ -189,6 +189,8 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
   private var themeObserver: NSObjectProtocol?
   private var bodyEdgeConstraints: [NSLayoutConstraint] = []
   let toolWindowBar = Surface(Theme.chrome)
+  var workspaceHeader: NSStackView!
+  var workspaceHeaderHeight: NSLayoutConstraint!
   var gitTabs: NSStackView!
   var gitToolTab: ToolWindowButton!
   var terminalToolTab: ToolWindowButton!
@@ -388,6 +390,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
           self?.refresh()
         },
       ], spacing: 16)
+    workspaceHeader = tabs
     tabs.translatesAutoresizingMaskIntoConstraints = false
     mainBody.addSubview(tabs)
     buildLog()
@@ -429,7 +432,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
       tabs.leadingAnchor.constraint(equalTo: mainBody.leadingAnchor, constant: 14),
       tabs.trailingAnchor.constraint(equalTo: mainBody.trailingAnchor, constant: -10),
       tabs.topAnchor.constraint(equalTo: mainBody.topAnchor),
-      tabs.heightAnchor.constraint(equalToConstant: 40),
+      { let height = tabs.heightAnchor.constraint(equalToConstant: 40); workspaceHeaderHeight = height; return height }(),
     ])
     setMode("Log")
   }
@@ -771,6 +774,8 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
   ) -> CGFloat { splitView.bounds.width - (dividerIndex == 0 ? 600 : 230) }
   func setMode(_ mode: String) {
     self.mode = mode
+    workspaceHeader.isHidden = mode == "Reviews"
+    workspaceHeaderHeight.constant = mode == "Reviews" ? 0 : 40
     sectionTitle.stringValue = mode == "Commit" ? "Commit" : mode == "Reviews" ? (hostingWorkspace.context?.provider.requestTitle ?? "Code Reviews") : "Git"
     gitTabs.isHidden = mode == "Commit" || mode == "Reviews"
     updateToolWindowSelection()

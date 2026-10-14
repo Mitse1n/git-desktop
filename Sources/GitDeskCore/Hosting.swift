@@ -47,6 +47,11 @@ public struct HostingRepository: Equatable {
     self.provider = kind; self.server = origin; self.project = path; self.remote = remote
   }
 }
+public struct HostedRequestFilter: Equatable {
+  public var query = "", state = "open", author = "", label = "", assignee = "", review = "", sort = ""
+  public init() {}
+  public var isEmpty: Bool { query.isEmpty && state == "all" && author.isEmpty && label.isEmpty && assignee.isEmpty && review.isEmpty && sort.isEmpty }
+}
 public struct HostedRequest: Equatable {
   public let number: Int
   public let title: String
@@ -61,6 +66,8 @@ public struct HostedRequest: Equatable {
   public let baseSHA: String
   public let mergeStatus: String
   public let nodeID: String
+  public let createdAt: Date?
+  public let commentCount: Int
   public let startSHA: String
   public init(json: [String: Any], provider: HostingProvider) throws {
     guard let number = json[provider == .github ? "number" : "iid"] as? Int,
@@ -72,6 +79,8 @@ public struct HostedRequest: Equatable {
     let head = json["head"] as? [String: Any] ?? [:], base = json["base"] as? [String: Any] ?? [:]
     let diffs = json["diff_refs"] as? [String: Any] ?? [:]
     self.number = number; self.title = title; self.url = url
+    createdAt = (json["created_at"] as? String).flatMap { ISO8601DateFormatter().date(from: $0) }
+    commentCount = json[provider == .github ? "comments" : "user_notes_count"] as? Int ?? 0
     body = json[provider == .github ? "body" : "description"] as? String ?? ""
     let user = json[provider == .github ? "user" : "author"] as? [String: Any] ?? [:]
     author = user[provider == .github ? "login" : "username"] as? String ?? ""
@@ -166,6 +175,33 @@ public final class HostingClient {
     let sort = repository.provider == .github ? "sort=updated&direction=desc" : "order_by=updated_at&sort=desc"
     return try await array(collection + "?state=\(state)&per_page=50&page=\(page)&" + sort)
       .map { try HostedRequest(json: $0, provider: repository.provider) }
+  }
+  public func list(filter: HostedRequestFilter, page: Int = 1) async throws -> [HostedRequest] {
+    func quoted(_ value: String) -> String { "\"" + value.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\"" }
+    if repository.provider == .github {
+      // Search qualifiers cover the whole repository, rather than the loaded page.
+      var terms = ["repo:" + repository.project, "is:pr"]
+      if filter.state != "all" { terms.append("is:" + filter.state) }
+      if !filter.query.isEmpty { terms.append(filter.query) }
+      for (key, value) in [("author", filter.author), ("label", filter.label), ("assignee", filter.assignee)] where !value.isEmpty {
+        terms.append(key + ":" + quoted(value))
+      }
+      if !filter.review.isEmpty { terms.append(filter.review) }
+      if !filter.sort.isEmpty { terms.append("sort:" + filter.sort) }
+      let result = try await object("/search/issues?q=" + HostingRepository.encode(terms.joined(separator: " ")) + "&per_page=50&page=\(page)")
+      guard let items = result["items"] as? [[String: Any]] else { throw GitFailure("Expected a request search result.") }
+      return try items.map { try HostedRequest(json: $0, provider: .github) }
+    }
+    var parameters = ["scope=all", "state=" + (filter.state == "open" ? "opened" : filter.state), "per_page=50", "page=\(page)"]
+    for (key, value) in [("search", filter.query), ("author_username", filter.author), ("labels", filter.label), ("assignee_username", filter.assignee), ("reviewer_username", filter.review)] where !value.isEmpty {
+      if value == "@me", key == "author_username" || key == "assignee_username" || key == "reviewer_username" {
+        parameters[0] = "scope=" + (key == "author_username" ? "created_by_me" : key == "assignee_username" ? "assigned_to_me" : "reviews_for_me")
+      } else { parameters.append(key + "=" + HostingRepository.encode(value)) }
+    }
+    let parts = (filter.sort.isEmpty ? "created-desc" : filter.sort).split(separator: "-")
+    parameters.append("order_by=" + (parts.first == "updated" ? "updated_at" : "created_at"))
+    parameters.append("sort=" + (parts.last == "asc" ? "asc" : "desc"))
+    return try await array(collection + "?" + parameters.joined(separator: "&")).map { try HostedRequest(json: $0, provider: .gitlab) }
   }
   public func details(_ number: Int) async throws -> HostedRequest {
     try HostedRequest(json: await object(collection + "/\(number)"), provider: repository.provider)

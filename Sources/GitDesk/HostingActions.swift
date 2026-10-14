@@ -11,6 +11,7 @@ extension RepositoryController {
       self.hostingTab.setAccessibilityLabel(title)
       if self.mode == "Reviews" { self.sectionTitle.stringValue = title }
     }
+    hostingWorkspace.hideToolWindow = { [weak self] in self?.setMode("Log") }
     addChild(hostingWorkspace)
     pin(hostingWorkspace.view, to: hostingBody)
     hostingWorkspace.checkout = { [weak self] context, request in self?.checkoutHostedRequest(context, request: request) }

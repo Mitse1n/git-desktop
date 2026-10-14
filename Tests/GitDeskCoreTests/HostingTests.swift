@@ -57,6 +57,7 @@ extension GitRepositoryTests {
             XCTAssertFalse(request.url!.absoluteString.contains(token))
             observed.append(request)
             let path = request.url!.path
+            if path.hasSuffix("/search/issues") { return (200, ["items": [detail]]) }
             if request.httpMethod == "GET", path.hasSuffix("/7") { return (200, detail) }
             if request.httpMethod == "GET", path.hasSuffix(gh ? "/pulls" : "/merge_requests") { return (200, [detail]) }
             if path.hasSuffix("/files") || path.hasSuffix("/diffs") {
@@ -72,6 +73,24 @@ extension GitRepositoryTests {
           }
           let list = try await client.list()
           XCTAssertEqual(list.first?.number, 7)
+          var filters = HostedRequestFilter()
+          filters.query = "unicode 中文 & value"; filters.state = "merged"; filters.author = "author"
+          filters.label = "needs review"; filters.assignee = "reviewer"; filters.sort = "updated-asc"
+          let filtered = try await client.list(filter: filters, page: 2)
+          XCTAssertEqual(filtered.first?.number, 7)
+          let searchURL = observed.last!.url!
+          let parameters = URLComponents(url: searchURL, resolvingAgainstBaseURL: false)!.queryItems!
+          XCTAssertEqual(parameters.first { $0.name == "page" }?.value, "2")
+          if gh {
+            let query = parameters.first { $0.name == "q" }!.value!
+            XCTAssertTrue(query.contains("is:merged") && query.contains("label:\"needs review\""))
+            XCTAssertTrue(query.contains("unicode 中文 & value") && query.contains("sort:updated-asc"))
+          } else {
+            XCTAssertEqual(parameters.first { $0.name == "state" }?.value, "merged")
+            XCTAssertEqual(parameters.first { $0.name == "author_username" }?.value, "author")
+            XCTAssertEqual(parameters.first { $0.name == "labels" }?.value, "needs review")
+            XCTAssertEqual(parameters.first { $0.name == "scope" }?.value, "all")
+          }
           let loaded = try await client.details(7)
           XCTAssertEqual(loaded.headSHA, "head")
           let files = try await client.files(7)

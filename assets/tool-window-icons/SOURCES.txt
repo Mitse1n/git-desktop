@@ -5,3 +5,8 @@ commit: platform/icons/src/expui/toolwindows/commit@20x20.svg and platform/icons
 github: plugins/github/github-core/resources/org/jetbrains/plugins/github/expui/pullRequests.svg and plugins/github/github-core/resources/org/jetbrains/plugins/github/expui/pullRequests_dark.svg
 gitlab: plugins/gitlab/shared/resources/org/jetbrains/plugins/gitlab/expui/gitLabToolWindow@20x20.svg and plugins/gitlab/shared/resources/org/jetbrains/plugins/gitlab/expui/gitLabToolWindow@20x20_dark.svg
 terminal: plugins/terminal/resources/icons/expui/toolwindow/terminal@20x20.svg and plugins/terminal/resources/icons/expui/toolwindow/terminal@20x20_dark.svg
+add: platform/icons/src/expui/general/add.svg and add_dark.svg
+locate: platform/icons/src/expui/general/locate.svg and locate_dark.svg
+moreVertical: platform/icons/src/expui/general/moreVertical.svg and moreVertical_dark.svg
+hide: platform/icons/src/expui/general/hide.svg and hide_dark.svg
+filter: platform/icons/src/expui/general/filter.svg and filter_dark.svg

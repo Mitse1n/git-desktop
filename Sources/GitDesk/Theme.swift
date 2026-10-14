@@ -318,7 +318,7 @@ func pin(_ child: NSView, to parent: NSView, inset: CGFloat = 0) {
     child.bottomAnchor.constraint(equalTo: parent.bottomAnchor, constant: -inset),
   ])
 }
-func makePanel(_ toolbar: NSView, body: NSView, height: CGFloat = 42) -> NSView {
+func makePanel(_ toolbar: NSView, body: NSView, height: CGFloat = 42, inset: CGFloat = 6) -> NSView {
   let view = Surface()
   toolbar.translatesAutoresizingMaskIntoConstraints = false
   body.translatesAutoresizingMaskIntoConstraints = false
@@ -326,8 +326,8 @@ func makePanel(_ toolbar: NSView, body: NSView, height: CGFloat = 42) -> NSView 
   view.addSubview(body)
   NSLayoutConstraint.activate([
     toolbar.topAnchor.constraint(equalTo: view.topAnchor),
-    toolbar.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 6),
-    toolbar.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -6),
+    toolbar.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: inset),
+    toolbar.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -inset),
     toolbar.heightAnchor.constraint(equalToConstant: height),
     body.topAnchor.constraint(equalTo: toolbar.bottomAnchor, constant: 1),
     body.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -670,6 +670,7 @@ private final class FlatSearchCell: NSSearchFieldCell {
 }
 final class FlatSearchField: NSSearchField {
   var showsOutline = true
+  var showsFocusOutline = false
   override init(frame frameRect: NSRect) {
     super.init(frame: frameRect)
     cell = FlatSearchCell(textCell: "")
@@ -688,9 +689,10 @@ final class FlatSearchField: NSSearchField {
   required init?(coder: NSCoder) { fatalError() }
   override func draw(_ dirtyRect: NSRect) {
     if showsOutline {
-      Theme.line.setStroke()
-      let border = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 3, yRadius: 3)
-      border.lineWidth = 1
+      let focused = showsFocusOutline && currentEditor() != nil
+      (focused ? Theme.accent : Theme.line).setStroke()
+      let border = NSBezierPath(roundedRect: bounds.insetBy(dx: focused ? 1 : 0.5, dy: focused ? 1 : 0.5), xRadius: 3, yRadius: 3)
+      border.lineWidth = focused ? 2 : 1
       border.stroke()
     }
     super.draw(dirtyRect)

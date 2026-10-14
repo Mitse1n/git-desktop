@@ -18,7 +18,15 @@ private final class HostingUIFixture: URLProtocol {
         "source_branch": "feature/review-\(number)", "target_branch": "main", "sha": "head\(number)", "diff_refs": ["base_sha": "base", "start_sha": "base", "head_sha": "head\(number)"]]
     }
     let payload: Any
-    if path.hasSuffix("/pulls") || path.hasSuffix("/merge_requests") { payload = [review(1), review(2)] }
+    let parameters = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+    let paging = parameters.contains { ($0.name == "q" || $0.name == "search") && ($0.value ?? "").contains("pagination") }
+    let secondPage = parameters.contains { $0.name == "page" && $0.value == "2" }
+    let empty = parameters.contains { ($0.name == "q" || $0.name == "search") && ($0.value ?? "").contains("does-not-exist") }
+    if paging && path.hasSuffix("/search/issues") { payload = ["items": secondPage ? [review(99)] : (10..<60).map(review)] }
+    else if paging && path.hasSuffix("/merge_requests") { payload = secondPage ? [review(99)] : (10..<60).map(review) }
+    else if path.hasSuffix("/search/issues") { payload = ["items": empty ? [] : [review(1), review(2)]] }
+    else if empty && path.hasSuffix("/merge_requests") { payload = [] }
+    else if path.hasSuffix("/pulls") || path.hasSuffix("/merge_requests") { payload = [review(1), review(2)] }
     else if path.hasSuffix("/1") || path.hasSuffix("/2") { payload = review(path.hasSuffix("/1") ? 1 : 2) }
     else if path.hasSuffix("/files") { payload = [["filename": "Sources/Review.swift", "patch": "@@ -1 +1 @@\n-old\n+new", "status": "modified"]] }
     else if path.hasSuffix("/diffs") { payload = [["new_path": "Sources/Review.swift", "old_path": "Sources/Review.swift", "diff": "@@ -1 +1 @@\n-old\n+new"]] }
@@ -62,19 +70,23 @@ func runHostingChecks() throws {
     let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [HostingUIFixture.self]
     let client = HostingClient(repository: context, token: "fixture-token", session: URLSession(configuration: configuration))
     let workspace = HostingWorkspace()
-    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1440, height: 750), styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1174, height: 461), styleMask: [.titled, .resizable], backing: .buffered, defer: false)
     window.isReleasedWhenClosed = false; window.contentViewController = workspace; window.appearance = Theme.current.appearance
-    NSLayoutConstraint.activate([workspace.view.widthAnchor.constraint(equalToConstant: 1440), workspace.view.heightAnchor.constraint(equalToConstant: 750)])
+    NSLayoutConstraint.activate([workspace.view.widthAnchor.constraint(equalToConstant: 1174), workspace.view.heightAnchor.constraint(equalToConstant: 461)])
+    workspace.navigationSplit.subviews[0].widthAnchor.constraint(equalToConstant: 587).isActive = true
     func allTexts() -> [String] { workspace.tabs.tabViewItems.compactMap(\.view).flatMap(texts) }
     workspace.useClient(client, repository: nil)
     waitFor { workspace.requestsTable.numberOfRows == 2 }
     precondition(!workspace.requestList.isHidden && workspace.requestOverview.isHidden)
     workspace.view.layoutSubtreeIfNeeded()
-    precondition(workspace.navigationSplit.subviews[0].frame.width >= 340 && workspace.navigationSplit.subviews[0].frame.width <= 480)
+    precondition(workspace.navigationSplit.subviews[0].frame.width >= 340 && workspace.navigationSplit.subviews[0].frame.width <= 700)
     workspace.requestsTable.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+    precondition(!workspace.detailsVisible, "Selecting a request does not open details")
+    workspace.openSelectedRequest()
     precondition(buttons(workspace.view).first { $0.title == "Check Out" }?.isEnabled == false)
     RunLoop.current.run(until: Date().addingTimeInterval(0.02))
     workspace.requestsTable.selectRowIndexes(IndexSet(integer: 1), byExtendingSelection: false)
+    workspace.openSelectedRequest()
     waitFor { workspace.filesTable.numberOfRows == 1 && allTexts().contains(where: { $0.contains("fixture-reviewer") }) }
     RunLoop.current.run(until: Date().addingTimeInterval(0.25))
     precondition(allTexts().contains { $0.hasPrefix("#2 Demo review 2") }, "Cancelled request details must never replace the latest selection")
@@ -95,11 +107,37 @@ func runHostingChecks() throws {
         try bitmap.representation(using: .png, properties: [:])!.write(to: directory.appendingPathComponent(provider.rawValue + "-\(index).png"))
       }
     }
+    workspace.reload()
+    waitFor { buttons(workspace.view).first { $0.title == "Check Out" }?.isEnabled == true && workspace.requestsTable.numberOfRows == 2 }
+    precondition(workspace.detailsVisible, "Refreshing an opened request keeps its editor and reloads details")
     workspace.showRequestList()
     precondition(!workspace.requestList.isHidden && workspace.requestOverview.isHidden)
     workspace.requestsTable.selectRowIndexes(IndexSet(integer: 1), byExtendingSelection: false)
+    workspace.openSelectedRequest()
     waitFor { buttons(workspace.view).first { $0.title == "Check Out" }?.isEnabled == true }
     precondition(!workspace.requestOverview.isHidden, "Back navigation allows reopening the same request")
+    workspace.showRequestList()
+    workspace.search.stringValue = "does-not-exist"
+    workspace.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: workspace.search))
+    waitFor { workspace.listEmptyMessage.stringValue.contains("matching filters") && workspace.requestsTable.numberOfRows == 0 }
+    precondition(!workspace.detailsVisible)
+    if let output = ProcessInfo.processInfo.environment["GITDESK_HOSTING_SCREENSHOTS"] {
+      workspace.view.layoutSubtreeIfNeeded()
+      let left = workspace.navigationSplit.subviews[0]
+      let bitmap = left.bitmapImageRepForCachingDisplay(in: left.bounds)!
+      left.cacheDisplay(in: left.bounds, to: bitmap)
+      try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: output).appendingPathComponent(provider.rawValue + "-empty.png"))
+    }
+    workspace.clearFilters()
+    waitFor { workspace.requestsTable.numberOfRows == 2 }
+    precondition(workspace.requestFilter.isEmpty && workspace.search.stringValue.isEmpty)
+    workspace.search.stringValue = "pagination"
+    workspace.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: workspace.search))
+    waitFor { workspace.requestsTable.numberOfRows == 50 }
+    workspace.view.layoutSubtreeIfNeeded()
+    workspace.requestsTable.scrollRowToVisible(49)
+    waitFor { workspace.requestsTable.numberOfRows == 51 }
+    precondition(workspace.requestFilter.query == "pagination", "Lazy loading keeps the active server search")
     window.close()
   }
   print("Hosting UI: GitHub/GitLab lists, details, files, discussion, action states and stale-selection cancellation passed")

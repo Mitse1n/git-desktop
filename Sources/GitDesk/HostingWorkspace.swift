@@ -3,13 +3,24 @@ import GitDeskCore
 
 final class HostingWorkspace: NSViewController, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate {
   private let remotePicker = NSPopUpButton()
-  private let statePicker = NSPopUpButton()
-  private let search = NSSearchField()
-  let requestsTable = MenuTable()
+  let search = FlatSearchField(frame: .zero)
+  let requestsTable = HostingRequestTable()
   let filesTable = MenuTable()
   private let overview = NSTextView(), patch = NSTextView(), discussion = NSTextView(), checks = NSTextView()
   private let status = label("Open a repository with a GitHub or GitLab remote.", color: Theme.muted, size: 12)
-  private let heading = label("Code Reviews", bold: true)
+  private let repositoryButton = ActionButton("Code Reviews") {}
+  let listEmptyMessage = label("Open a repository with a GitHub or GitLab remote.", color: Theme.muted)
+  private let listEmptyAction = ActionButton("Connect Account…", size: 20) {}
+  private let listEmpty = NSStackView()
+  private let rightContent = Surface()
+  private var filterControls: [String: ReviewFilterControl] = [:]
+  private(set) var requestFilter = HostedRequestFilter()
+  private var listLoading = false
+  private var listError: String?
+  private var searchWork: DispatchWorkItem?
+  private var scrollObserver: NSObjectProtocol?
+  var detailsVisible: Bool { !rightContent.isHidden }
+
   let tabs = NSTabView()
   private let threadPicker = NSPopUpButton()
   private var threads: [HostedThread] = []
@@ -36,21 +47,32 @@ final class HostingWorkspace: NSViewController, NSTableViewDataSource, NSTableVi
   var isWriting: Bool { writing }
   private var detailReady = false { didSet { updateActionState() } }
   private var selected: HostedRequest?
+  private var openedRequest: HostedRequest?
+  private var selectOpenedButton: ToolWindowButton!
+  private var quickFilterButton: ToolWindowButton?
+  var hideToolWindow: (() -> Void)?
   var checkout: ((HostingRepository, HostedRequest) -> Void)?
   var showDiff: ((HostingRepository, HostedRequest, String?) -> Void)?
+  deinit { if let scrollObserver { NotificationCenter.default.removeObserver(scrollObserver) }; task?.cancel(); detailTask?.cancel(); searchWork?.cancel() }
   override func loadView() {
     view = Surface()
     remotePicker.target = self; remotePicker.action = #selector(remoteChanged)
-    statePicker.addItems(withTitles: ["Open", "Closed", "All"])
-    statePicker.target = self; statePicker.action = #selector(reloadFromFilter)
-    search.placeholderString = "Title, author or number"; search.delegate = self
-    search.widthAnchor.constraint(greaterThanOrEqualToConstant: 100).isActive = true
-    let toolbar = row([heading, NSView(),
-      ActionButton(symbol: "arrow.clockwise", tooltip: "Refresh Requests") { [weak self] in self?.reload() },
-      ActionButton(symbol: "person.crop.circle", tooltip: "Account…") { [weak self] in self?.accountMenu() },
-      ActionButton(symbol: "plus", tooltip: "Create Request…") { [weak self] in self?.createRequest() }], spacing: 4)
-    let filters = row([remotePicker, statePicker, NSView()], spacing: 6)
-    let searchRow = row([search])
+    search.placeholderString = ""; search.delegate = self
+    search.setAccessibilityLabel("Search pull or merge requests")
+    search.sendsSearchStringImmediately = true
+    search.showsFocusOutline = true
+    repositoryButton.isTab = true
+    repositoryButton.isBordered = true
+    repositoryButton.handler = { [weak self] in self?.repositoryMenu() }
+    selectOpenedButton = ToolWindowButton(icon: "locate", tooltip: "Select Opened Request", size: 24, iconSize: 16) { [weak self] in self?.revealOpenedRequest() }
+    selectOpenedButton.isEnabled = false
+    let toolbar = row([repositoryButton, NSView(),
+      ToolWindowButton(icon: "add", tooltip: "Create Request…", size: 24, iconSize: 16) { [weak self] in self?.createRequest() },
+      selectOpenedButton,
+      ToolWindowButton(icon: "moreVertical", tooltip: "Options", size: 24, iconSize: 16) { [weak self] in self?.listOptions() },
+      ToolWindowButton(icon: "hide", tooltip: "Hide", size: 24, iconSize: 16) { [weak self] in self?.hideToolWindow?() }
+    ], spacing: 2)
+    toolbar.edgeInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 3)
     for table in [requestsTable, filesTable] {
       configureTable(table); table.delegate = self; table.dataSource = self; table.rowHeight = 48
       table.addTableColumn(NSTableColumn(identifier: .init("content")))
@@ -58,9 +80,57 @@ final class HostingWorkspace: NSViewController, NSTableViewDataSource, NSTableVi
     requestsTable.setAccessibilityLabel("Pull requests and merge requests")
     filesTable.setAccessibilityLabel("Changed files")
     filesTable.target = self; filesTable.doubleAction = #selector(openFileDiff)
+    requestsTable.openRequest = { [weak self] in self?.openSelectedRequest() }
+    requestsTable.target = self; requestsTable.doubleAction = #selector(openSelectedRequest)
     requestsTable.menuProvider = { [weak self] in self?.requestMenu() ?? NSMenu() }
-    let list = makePanel(row([label("Requests", bold: true), NSView(), ActionButton("Load More") { [weak self] in self?.reload(more: true) }]), body: scrollView(requestsTable), height: 32)
-    pin(makePanel(filters, body: makePanel(searchRow, body: list, height: 34), height: 32), to: requestList)
+    let list = Surface()
+    let tableScroll = scrollView(requestsTable)
+    tableScroll.contentView.postsBoundsChangedNotifications = true
+    scrollObserver = NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification,
+      object: tableScroll.contentView, queue: .main) { [weak self, weak tableScroll] _ in
+        guard let self, let tableScroll, self.hasMore, !self.listLoading,
+          tableScroll.documentVisibleRect.maxY >= self.requestsTable.bounds.height - 120 else { return }
+        self.reload(more: true)
+      }
+    pin(tableScroll, to: list)
+    listEmpty.orientation = .vertical; listEmpty.alignment = .centerX; listEmpty.spacing = 2
+    listEmptyMessage.maximumNumberOfLines = 3
+    listEmptyMessage.alignment = .center
+    listEmptyAction.contentTintColor = Theme.blue
+    listEmptyAction.handler = { [weak self] in
+      guard let self else { return }
+      if self.listError != nil { self.reload() }
+      else if self.client == nil { self.connect() }
+      else { self.clearFilters() }
+    }
+    listEmpty.addArrangedSubview(listEmptyMessage); listEmpty.addArrangedSubview(listEmptyAction)
+    listEmpty.translatesAutoresizingMaskIntoConstraints = false
+    list.addSubview(listEmpty)
+    let emptyTop = NSView(); emptyTop.translatesAutoresizingMaskIntoConstraints = false
+    list.addSubview(emptyTop)
+    NSLayoutConstraint.activate([
+      emptyTop.topAnchor.constraint(equalTo: list.topAnchor),
+      emptyTop.heightAnchor.constraint(equalTo: list.heightAnchor, multiplier: 1.0 / 3, constant: -14),
+      emptyTop.leadingAnchor.constraint(equalTo: list.leadingAnchor),
+      emptyTop.widthAnchor.constraint(equalToConstant: 0),
+      listEmpty.centerXAnchor.constraint(equalTo: list.centerXAnchor),
+      listEmpty.topAnchor.constraint(equalTo: emptyTop.bottomAnchor),
+      listEmpty.widthAnchor.constraint(lessThanOrEqualTo: list.widthAnchor, constant: -30),
+    ])
+    let filterBar = buildFilterBar()
+    let searchArea = Surface()
+    searchArea.addSubview(search); filterBar.translatesAutoresizingMaskIntoConstraints = false
+    searchArea.addSubview(filterBar)
+    NSLayoutConstraint.activate([
+      search.leadingAnchor.constraint(equalTo: searchArea.leadingAnchor, constant: 2),
+      search.trailingAnchor.constraint(equalTo: searchArea.trailingAnchor, constant: -2),
+      search.topAnchor.constraint(equalTo: searchArea.topAnchor, constant: 11),
+      filterBar.leadingAnchor.constraint(equalTo: searchArea.leadingAnchor, constant: 0),
+      filterBar.trailingAnchor.constraint(equalTo: searchArea.trailingAnchor, constant: 0),
+      filterBar.topAnchor.constraint(equalTo: search.bottomAnchor, constant: 10),
+      filterBar.heightAnchor.constraint(equalToConstant: 30),
+    ])
+    pin(makePanel(searchArea, body: list, height: 86), to: requestList)
     for text in [overview, patch, discussion, checks] {
       text.isEditable = false; text.isRichText = false; text.font = Theme.font
       text.textColor = Theme.text; text.backgroundColor = Theme.background
@@ -91,7 +161,7 @@ final class HostingWorkspace: NSViewController, NSTableViewDataSource, NSTableVi
       row([ActionButton("All Requests", symbol: "chevron.left") { [weak self] in self?.showRequestList() }, NSView(),
         ActionButton(symbol: "arrow.up.right.square", tooltip: "Open on Server") { [weak self] in self?.openBrowser() }]),
       requestTitle, requestAuthor, requestBranches,
-      row([checkout, diff, NSView()]), row([review, merge, close, NSView()]), row([comment, NSView()])])
+      row([checkout, diff, NSView()]), row([review, merge, close, NSView()]), row([comment, NSView()]), status])
     summary.orientation = .vertical; summary.alignment = .leading; summary.spacing = 6
     summary.translatesAutoresizingMaskIntoConstraints = false
     let changedFiles = makePanel(row([label("Changes", bold: true), NSView()]), body: scrollView(filesTable), height: 32)
@@ -111,9 +181,9 @@ final class HostingWorkspace: NSViewController, NSTableViewDataSource, NSTableVi
     showRequestList()
     status.maximumNumberOfLines = 2
     status.lineBreakMode = .byTruncatingMiddle
-    let left = makePanel(toolbar, body: makePanel(row([status]), body: navigation, height: 44), height: 36)
+    let left = makePanel(toolbar, body: navigation, height: 40, inset: 4)
     left.widthAnchor.constraint(greaterThanOrEqualToConstant: 340).isActive = true
-    left.widthAnchor.constraint(lessThanOrEqualToConstant: 480).isActive = true
+    left.widthAnchor.constraint(lessThanOrEqualToConstant: 700).isActive = true
     tabs.tabViewType = .noTabsNoBorder
     sectionButtons = ["Overview", "Files", "Timeline", "Checks & Reviews"].enumerated().map { index, title in
       let button = ActionButton(title) { [weak self] in self?.selectSection(index) }
@@ -121,14 +191,17 @@ final class HostingWorkspace: NSViewController, NSTableViewDataSource, NSTableVi
       return button
     }
     let sections = row(sectionButtons + [NSView()], spacing: 14)
-    let right = makePanel(sections, body: tabs, height: 36)
+    pin(makePanel(sections, body: tabs, height: 36), to: rightContent)
     navigationSplit.isVertical = true; navigationSplit.dividerStyle = .thin
     navigationSplit.autosaveName = "ReviewToolWindowSplit"
-    navigationSplit.addArrangedSubview(left); navigationSplit.addArrangedSubview(right)
+    let editorArea = Surface()
+    pin(rightContent, to: editorArea)
+    navigationSplit.addArrangedSubview(left); navigationSplit.addArrangedSubview(editorArea)
     pin(navigationSplit, to: view)
     updateActionState()
     overview.string = "Select a request to view its description, changed files, discussion, reviews and CI checks."
     selectSection(0)
+    updateListState()
   }
   func selectSection(_ index: Int) {
     tabs.selectTabViewItem(at: index)
@@ -143,7 +216,7 @@ final class HostingWorkspace: NSViewController, NSTableViewDataSource, NSTableVi
     super.viewDidLayout()
     if !initializedNavigation, navigationSplit.bounds.width > 600 {
       initializedNavigation = true
-      navigationSplit.setPosition(380, ofDividerAt: 0)
+      navigationSplit.setPosition(580, ofDividerAt: 0)
     }
   }
   func showRequestList() {
@@ -152,20 +225,26 @@ final class HostingWorkspace: NSViewController, NSTableViewDataSource, NSTableVi
     selected = nil; detailReady = false
     requestList.isHidden = false
     requestOverview.isHidden = true
+    rightContent.isHidden = true
+    updateListState()
   }
   private func showRequestOverview(_ request: HostedRequest) {
+    status.stringValue = ""
     requestTitle.stringValue = "#\(request.number) \(request.title)"
     requestTitle.toolTip = request.title
     requestBranches.stringValue = "\(request.source) → \(request.target)"
     requestAuthor.stringValue = "\(request.author) · \(request.draft ? "Draft" : request.state)"
     requestList.isHidden = true
     requestOverview.isHidden = false
+    rightContent.isHidden = false
   }
   func useClient(_ client: HostingClient, repository: GitRepository?) {
     _ = view
     task?.cancel(); detailTask?.cancel(); selected = nil; detailReady = false; showRequestList()
     self.repo = repository; self.context = client.repository; self.client = client
-    heading.stringValue = client.repository.provider.requestTitle
+    openedRequest = nil; selectOpenedButton.isEnabled = false; listError = nil
+    repositoryButton.title = client.repository.project
+    updateFilterControls()
     if remotePicker.numberOfItems == 0 { remotePicker.addItem(withTitle: client.repository.remote) }
     reload()
   }
@@ -182,9 +261,10 @@ final class HostingWorkspace: NSViewController, NSTableViewDataSource, NSTableVi
     guard force || repo?.workingDirectory != repository?.workingDirectory else { return }
     repo = repository; task?.cancel(); detailTask?.cancel(); selected = nil; detailReady = false; showRequestList()
     remotes = []; requests = []; displayed = []; files = []; requestsTable.reloadData(); filesTable.reloadData()
-    remotePicker.removeAllItems(); context = nil; client = nil
+    remotePicker.removeAllItems(); context = nil; client = nil; openedRequest = nil; selectOpenedButton.isEnabled = false
+    repositoryButton.title = "Code Reviews"; listLoading = false; listError = nil
     overview.string = "Select a request to view its description, changed files, discussion, reviews and CI checks."
-    guard let repository else { status.stringValue = "Open a repository to connect a hosting account."; return }
+    guard let repository else { status.stringValue = "Open a repository to connect a hosting account."; updateListState(); return }
     task = Task { @MainActor [weak self] in
       do {
         let values = try await Task.detached { () -> [(String, String)] in
@@ -195,18 +275,22 @@ final class HostingWorkspace: NSViewController, NSTableViewDataSource, NSTableVi
         guard let self, !Task.isCancelled else { return }
         self.remotes = values; self.remotePicker.addItems(withTitles: values.map(\.0))
         if values.contains(where: { $0.0 == "origin" }) { self.remotePicker.selectItem(withTitle: "origin") }
+        if let valid = values.firstIndex(where: { (try? HostingRepository(remoteURL: $0.1, remote: $0.0)) != nil }),
+          (try? HostingRepository(remoteURL: values[self.remotePicker.indexOfSelectedItem].1, remote: values[self.remotePicker.indexOfSelectedItem].0)) == nil {
+          self.remotePicker.selectItem(at: valid)
+        }
         self.remoteChanged()
-      } catch { if !Task.isCancelled { self?.status.stringValue = error.localizedDescription } }
+      } catch { if !Task.isCancelled { self?.status.stringValue = error.localizedDescription; self?.updateListState() } }
     }
   }
   @objc private func remoteChanged() {
     guard !writing else { return }
     task?.cancel(); detailTask?.cancel(); selected = nil; detailReady = false
-    context = nil; client = nil; showRequestList()
+    context = nil; client = nil; openedRequest = nil; selectOpenedButton.isEnabled = false; showRequestList()
     requests = []; displayed = []; files = []; requestsTable.reloadData(); filesTable.reloadData()
     overview.string = "Select a request to view its details."; discussion.string = ""; checks.string = ""; patch.string = ""
     let index = remotePicker.indexOfSelectedItem
-    guard remotes.indices.contains(index) else { status.stringValue = "No remote configured. Add one using Git → Manage Remotes."; return }
+    guard remotes.indices.contains(index) else { status.stringValue = "No remote configured. Add one using Git → Manage Remotes."; updateListState(); return }
     do {
       let remote = remotes[index]
       let detected = try HostingRepository(remoteURL: remote.url, remote: remote.name)
@@ -215,37 +299,89 @@ final class HostingWorkspace: NSViewController, NSTableViewDataSource, NSTableVi
       let provider = profile?["provider"].flatMap(HostingProvider.init(rawValue:)) ?? detected.provider
       let server = profile?["server"].flatMap(URL.init(string:)) ?? detected.server
       context = try HostingRepository(remoteURL: remote.url, remote: remote.name, provider: provider, server: server)
-      heading.stringValue = provider.requestTitle
+      repositoryButton.title = context!.project
       useClient(HostingClient(repository: context!, token: try HostingCredentials.token(for: context!.credentialKey)), repository: repo)
-    } catch { status.stringValue = error.localizedDescription }
+    } catch { status.stringValue = error.localizedDescription; updateListState() }
   }
-  @objc private func reloadFromFilter() { reload() }
   func reload(more: Bool = false) {
-    guard !writing else { return }
-    guard let client else { if !more { configure(repository: repo, force: true) }; return }
-    if more && !hasMore { status.stringValue = "All loaded requests are shown."; return }
-    task?.cancel(); let next = more ? page + 1 : 1
-    let state = ["open", "closed", "all"][max(0, statePicker.indexOfSelectedItem)]
-    status.stringValue = "Loading \(client.repository.provider.requestTitle.lowercased())…"
+    guard !writing, let client else { updateListState(); return }
+    if more && (!hasMore || listLoading) { return }
+    searchWork?.cancel()
+    task?.cancel()
+    let next = more ? page + 1 : 1
+    let filter = requestFilter
+    listLoading = true; listError = nil
+    if !more { requests = []; displayed = []; requestsTable.reloadData() }
+    updateListState()
     task = Task { @MainActor [weak self] in
       do {
-        let requests = try await client.list(state: state, page: next)
+        let requests = try await client.list(filter: filter, page: next)
         guard let self, !Task.isCancelled else { return }
-        let previous = self.selected?.number
         self.requests = more ? self.requests + requests : requests
-        self.page = next; self.hasMore = requests.count == 50; self.applySearch()
-        self.status.stringValue = "\(client.repository.project) · \(self.requests.count) requests" + (self.hasMore ? " · Load More available" : "")
-        if let row = self.displayed.firstIndex(where: { $0.number == previous }) {
-          self.requestsTable.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        self.displayed = self.requests
+        self.page = next; self.hasMore = requests.count == 50; self.listLoading = false
+        self.requestsTable.reloadData(); self.updateListState()
+        if !more, !self.requestOverview.isHidden, let selected = self.selected {
+          self.loadDetails(selected, client: client)
         }
-      } catch { if !Task.isCancelled { self?.status.stringValue = error.localizedDescription + " Connect Account for private repositories." } }
+      } catch {
+        guard let self, !Task.isCancelled else { return }
+        self.listLoading = false; self.listError = error.localizedDescription
+        self.updateListState()
+      }
     }
   }
-  func controlTextDidChange(_ obj: Notification) { applySearch() }
-  private func applySearch() {
-    let query = search.stringValue
-    displayed = requests.filter { query.isEmpty || "\($0.number) \($0.title) \($0.author)".localizedCaseInsensitiveContains(query) }
-    requestsTable.reloadData()
+  func controlTextDidBeginEditing(_ obj: Notification) { search.needsDisplay = true }
+  func controlTextDidEndEditing(_ obj: Notification) { search.needsDisplay = true }
+  func controlTextDidChange(_ obj: Notification) {
+    requestFilter.query = search.stringValue
+    searchWork?.cancel()
+    // Cancel immediately so a previous search cannot repaint while typing.
+    task?.cancel(); listLoading = false
+    let work = DispatchWorkItem { [weak self] in self?.reload() }
+    searchWork = work
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
+  }
+  func clearFilters() {
+    requestFilter = HostedRequestFilter(); requestFilter.state = "all"
+    search.stringValue = ""; updateFilterControls(); reload()
+  }
+  func setFilter(_ key: String, value: String) {
+    switch key {
+    case "State": requestFilter.state = value
+    case "Author": requestFilter.author = value
+    case "Label": requestFilter.label = value
+    case "Assignee": requestFilter.assignee = value
+    case "Review": requestFilter.review = value
+    case "Sort": requestFilter.sort = value
+    default: return
+    }
+    showRequestList(); updateFilterControls(); reload()
+  }
+  private func updateListState() {
+    listEmpty.isHidden = !displayed.isEmpty
+    listEmptyAction.isHidden = listLoading
+    if listLoading { listEmptyMessage.stringValue = "Loading…" }
+    else if let listError {
+      listEmptyMessage.stringValue = "Could not load requests.\n" + listError
+      listEmptyAction.title = "Retry"
+    } else if client == nil {
+      listEmptyMessage.stringValue = status.stringValue
+      listEmptyAction.title = "Connect Account…"
+    } else {
+      let noun = context?.provider == .gitlab ? "merge requests" : "pull requests"
+      listEmptyMessage.stringValue = requestFilter.isEmpty ? "No \(noun) in \(context?.project ?? "this repository")" : "No \(noun) matching filters"
+      listEmptyAction.title = "Clear filters"
+      listEmptyAction.isHidden = requestFilter.isEmpty
+    }
+    listEmptyAction.attributedTitle = NSAttributedString(string: listEmptyAction.title,
+      attributes: [.font: Theme.font, .foregroundColor: Theme.blue, .underlineStyle: NSUnderlineStyle.single.rawValue])
+  }
+  @objc func openSelectedRequest() {
+    let index = requestsTable.selectedRow
+    guard displayed.indices.contains(index), let client else { return }
+    selected = displayed[index]; openedRequest = selected; selectOpenedButton.isEnabled = true; detailReady = false
+    showRequestOverview(selected!); selectSection(0); loadDetails(selected!, client: client)
   }
   func numberOfRows(in tableView: NSTableView) -> Int { tableView === requestsTable ? displayed.count : files.count }
   func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? { SelectionRow() }
@@ -254,10 +390,14 @@ final class HostingWorkspace: NSViewController, NSTableViewDataSource, NSTableVi
     if tableView === requestsTable {
       guard displayed.indices.contains(index) else { return nil }
       let request = displayed[index]
-      let title = label(request.title, bold: true); title.lineBreakMode = .byTruncatingTail; title.usesSingleLineMode = true
-      let metadata = label("#\(request.number) · \(request.author) · \(request.draft ? "Draft" : request.state)", color: Theme.muted, size: 11)
+      let title = label(request.title); title.lineBreakMode = .byTruncatingTail; title.usesSingleLineMode = true
+      let created = request.createdAt.map { LogDateFormatter().string($0) } ?? ""
+      let metadata = label("#\(request.number) · " + (created.isEmpty ? "" : "created \(created), ") + "by \(request.author)", color: Theme.muted, size: 12)
       let stack = NSStackView(views: [title, metadata]); stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 3
-      pin(stack, to: cell, inset: 7); cell.toolTip = request.title
+      let comments = label((request.draft ? "DRAFT   " : "") + "\(request.commentCount)", color: Theme.muted, size: 12)
+      let commentIcon = NSImageView(image: NSImage(systemSymbolName: "bubble.right", accessibilityDescription: "Comments") ?? NSImage())
+      commentIcon.contentTintColor = Theme.muted
+      pin(row([stack, NSView(), commentIcon, comments], spacing: 6), to: cell, inset: 10); cell.toolTip = request.title
     } else {
       guard files.indices.contains(index) else { return nil }
       let file = files[index], icon = FileTypeImageView(path: files[index].path)
@@ -286,12 +426,10 @@ final class HostingWorkspace: NSViewController, NSTableViewDataSource, NSTableVi
       selectSection(1)
       return
     }
-    let index = requestsTable.selectedRow
-    guard displayed.indices.contains(index), let client else { detailTask?.cancel(); selected = nil; detailReady = false; return }
-    detailReady = false
-    selected = displayed[index]; showRequestOverview(selected!); selectSection(0); loadDetails(selected!, client: client)
+    // Selection leaves the list visible. Enter or double-click opens a request.
   }
   private func loadDetails(_ request: HostedRequest, client: HostingClient) {
+    detailReady = false
     detailTask?.cancel(); files = []; filesTable.reloadData(); patch.string = ""
     threads = []; threadPicker.removeAllItems()
     overview.string = "Loading #\(request.number)…"; discussion.string = "Loading discussion…"; checks.string = "Loading checks and reviews…"
@@ -350,7 +488,7 @@ final class HostingWorkspace: NSViewController, NSTableViewDataSource, NSTableVi
       let configuration = try HostingRepository(remoteURL: remote.url, remote: remote.name, provider: provider.indexOfSelectedItem == 0 ? .github : .gitlab, server: url)
       let secret = token.stringValue; token.stringValue = ""
       let candidate = HostingClient(repository: configuration, token: secret)
-      task?.cancel(); status.stringValue = "Validating account…"
+      task?.cancel(); status.stringValue = "Validating account…"; updateListState()
       task = Task { @MainActor [weak self] in
         do {
           let user = try await candidate.object("/user")
@@ -363,11 +501,11 @@ final class HostingWorkspace: NSViewController, NSTableViewDataSource, NSTableVi
           if !self.remotes.isEmpty {
             self.selected = nil; self.detailReady = false; self.requests = []; self.displayed = []
             self.requestsTable.reloadData()
-            self.context = configuration; self.client = candidate; self.heading.stringValue = configuration.provider.requestTitle; self.reload()
+            self.context = configuration; self.client = candidate; self.repositoryButton.title = configuration.project; self.reload()
           } else { self.status.stringValue += ". Open or clone a repository to view its requests." }
-        } catch { if !Task.isCancelled { self?.status.stringValue = error.localizedDescription } }
+        } catch { if !Task.isCancelled { self?.status.stringValue = error.localizedDescription; self?.updateListState() } }
       }
-    } catch { status.stringValue = error.localizedDescription }
+    } catch { status.stringValue = error.localizedDescription; updateListState() }
   }
   private func accountMenu() {
     let menu = NSMenu()
@@ -401,8 +539,8 @@ final class HostingWorkspace: NSViewController, NSTableViewDataSource, NSTableVi
     guard let client, !writing else { return }
     writing = true; remotePicker.isEnabled = false; status.stringValue = title + "…"
     Task { @MainActor [weak self] in
-      do { try await operation(client); self?.writing = false; self?.remotePicker.isEnabled = true; self?.reload() }
-      catch { self?.writing = false; self?.remotePicker.isEnabled = true; self?.status.stringValue = error.localizedDescription }
+      do { try await operation(client); self?.writing = false; self?.remotePicker.isEnabled = true; self?.status.stringValue = ""; self?.reload() }
+      catch { self?.writing = false; self?.remotePicker.isEnabled = true; self?.status.stringValue = error.localizedDescription; self?.updateListState() }
     }
   }
   private func createRequest() {
@@ -506,7 +644,7 @@ final class HostingWorkspace: NSViewController, NSTableViewDataSource, NSTableVi
         let result = try await client.createSnippet(title: values[0], files: files, isPublic: publicSnippet.state == .on)
         await MainActor.run { _ = NSWorkspace.shared.open(result) }
       }
-    } catch { status.stringValue = error.localizedDescription }
+    } catch { status.stringValue = error.localizedDescription; updateListState() }
   }
   func commentOnLine(context: HostingRepository, request: HostedRequest, path: String, oldPath: String, line: Int, left: Bool) {
     guard self.context == context else {
@@ -521,5 +659,142 @@ final class HostingWorkspace: NSViewController, NSTableViewDataSource, NSTableVi
     menu.addItem(menuItem("Show Diff", enabled: selected != nil && detailReady) { [weak self] in self?.openFullDiff() })
     menu.addItem(menuItem("Open on Server", enabled: selected != nil && detailReady) { [weak self] in self?.openBrowser() })
     return menu
+  }
+}
+
+final class HostingRequestTable: MenuTable {
+  var openRequest: (() -> Void)?
+  override func keyDown(with event: NSEvent) {
+    if event.keyCode == 36 || event.keyCode == 76 { openRequest?(); return }
+    super.keyDown(with: event)
+  }
+}
+
+private final class ReviewFilterControl: NSStackView {
+  let button: ActionButton
+  let clearButton: ActionButton
+  init(name: String, choose: @escaping () -> Void, clear: @escaping () -> Void) {
+    button = ActionButton(name, symbol: "chevron.down", size: 26, action: choose)
+    button.imagePosition = .imageTrailing
+    button.image = button.image?.withSymbolConfiguration(.init(pointSize: 9, weight: .regular))
+    button.setAccessibilityLabel(name)
+    clearButton = ActionButton(symbol: "xmark", tooltip: "Clear " + name, size: 16, action: clear)
+    clearButton.image = clearButton.image?.withSymbolConfiguration(.init(pointSize: 9, weight: .regular))
+    super.init(frame: .zero)
+    orientation = .horizontal; alignment = .centerY; spacing = 2
+    addArrangedSubview(button); addArrangedSubview(clearButton)
+    clearButton.isHidden = true
+  }
+  required init?(coder: NSCoder) { fatalError() }
+  func update(name: String, value: String, caption: String) {
+    button.title = value.isEmpty ? name : caption
+    button.contentTintColor = value.isEmpty ? Theme.muted : Theme.text
+    button.image = value.isEmpty ? NSImage(systemSymbolName: "chevron.down", accessibilityDescription: nil)?.withSymbolConfiguration(.init(pointSize: 9, weight: .regular)) : nil
+    clearButton.isHidden = value.isEmpty
+    button.invalidateIntrinsicContentSize()
+  }
+}
+
+private extension HostingWorkspace {
+  func buildFilterBar() -> NSView {
+    let quick = ToolWindowButton(icon: "filter", tooltip: "Quick Filters", size: 24, iconSize: 16) { [weak self] in self?.quickFilters() }
+    quickFilterButton = quick
+    let controls = ["State", "Author", "Label", "Assignee", "Review", "Sort"].map { name -> ReviewFilterControl in
+      let control = ReviewFilterControl(name: name, choose: { [weak self] in self?.chooseFilter(name) },
+        clear: { [weak self] in self?.setFilter(name, value: name == "State" ? "all" : "") })
+      filterControls[name] = control
+      return control
+    }
+    let contents = row(controls, spacing: 12)
+    contents.translatesAutoresizingMaskIntoConstraints = false
+    let scroll = NSScrollView(); scroll.drawsBackground = false
+    scroll.hasHorizontalScroller = true; scroll.autohidesScrollers = true
+    scroll.documentView = contents
+    NSLayoutConstraint.activate([
+      contents.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
+      contents.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
+      contents.heightAnchor.constraint(equalToConstant: 28),
+    ])
+    let bar = row([quick, scroll], spacing: 6)
+    updateFilterControls()
+    return bar
+  }
+  func updateFilterControls() {
+    quickFilterButton?.showsActivityBadge = !requestFilter.isEmpty
+    for (key, value) in [("State", requestFilter.state == "all" ? "" : requestFilter.state), ("Author", requestFilter.author),
+      ("Label", requestFilter.label), ("Assignee", requestFilter.assignee), ("Review", requestFilter.review), ("Sort", requestFilter.sort)] {
+      let caption = filterChoices(key).first { $0.1 == value }?.0 ?? value
+      filterControls[key]?.update(name: key == "Review" && context?.provider == .gitlab ? "Reviewer" : key, value: value, caption: caption)
+    }
+  }
+  func filterChoices(_ name: String) -> [(String, String)] {
+    switch name {
+    case "State": return [("Open", "open"), ("Closed", "closed"), ("Merged", "merged")]
+    case "Sort":
+      var choices = [("Newest", "created-desc"), ("Oldest", "created-asc")]
+      if context?.provider != .gitlab { choices += [("Most commented", "comments-desc"), ("Least commented", "comments-asc")] }
+      return choices + [("Recently updated", "updated-desc"), ("Least recently updated", "updated-asc")]
+    case "Review" where context?.provider != .gitlab:
+      return [("No reviews", "review:none"), ("Review required", "review:required"), ("Approved review", "review:approved"),
+        ("Changes requested", "review:changes_requested"), ("Reviewed by you", "reviewed-by:@me"),
+        ("Not reviewed by you", "-reviewed-by:@me"), ("Awaiting review from you", "review-requested:@me")]
+    case "Author": return Array(Set(requests.map(\.author))).sorted().map { ($0, $0) }
+    default: return []
+    }
+  }
+  func chooseFilter(_ name: String) {
+    guard let anchor = filterControls[name]?.button else { return }
+    let menu = NSMenu()
+    for (caption, value) in filterChoices(name) {
+      menu.addItem(menuItem(caption) { [weak self] in self?.setFilter(name, value: value) })
+    }
+    if ["Author", "Label", "Assignee"].contains(name) || name == "Review" && context?.provider == .gitlab {
+      menu.addItem(menuItem("Choose \(name == "Review" ? "Reviewer" : name)…") { [weak self] in
+        guard let self, let values = self.prompt("Apply \(name)", fields: [(name == "Label" ? "Label" : "Username", "")]) else { return }
+        self.setFilter(name, value: values[0].trimmingCharacters(in: .whitespacesAndNewlines))
+      })
+    }
+    menu.addItem(.separator())
+    menu.addItem(menuItem("Clear \(name)") { [weak self] in self?.setFilter(name, value: name == "State" ? "all" : "") })
+    menu.popUp(positioning: nil, at: NSPoint(x: 0, y: anchor.bounds.maxY), in: anchor)
+  }
+  func quickFilters() {
+    let menu = NSMenu()
+    for (caption, key) in [("Open", "State"), ("Your pull requests", "Author"), ("Assigned to you", "Assignee"), ("Review requests", "Review")] {
+      menu.addItem(menuItem(context?.provider == .gitlab ? caption.replacingOccurrences(of: "pull", with: "merge") : caption) { [weak self] in
+        guard let self else { return }
+        self.requestFilter = HostedRequestFilter()
+        self.search.stringValue = ""
+        self.setFilter(key, value: key == "State" ? "open" : key == "Review" && self.context?.provider != .gitlab ? "review-requested:@me" : "@me")
+      })
+    }
+    menu.addItem(.separator())
+    menu.addItem(menuItem("Clear filters") { [weak self] in self?.clearFilters() })
+    menu.popUp(positioning: nil, at: NSPoint(x: 12, y: requestList.bounds.height - 80), in: requestList)
+  }
+  func repositoryMenu() {
+    let menu = NSMenu()
+    for (index, remote) in remotes.enumerated() {
+      let title = (try? HostingRepository(remoteURL: remote.url, remote: remote.name).project) ?? remote.name
+      menu.addItem(menuItem(title + " (" + remote.name + ")", enabled: !writing) { [weak self] in
+        self?.remotePicker.selectItem(at: index); self?.remoteChanged()
+      })
+    }
+    if remotes.isEmpty { menu.addItem(menuItem("No repositories with a hosting remote", enabled: false) {}) }
+    menu.addItem(.separator())
+    menu.addItem(menuItem("Connect Account…") { [weak self] in self?.connect() })
+    menu.popUp(positioning: nil, at: NSPoint(x: 0, y: repositoryButton.bounds.maxY), in: repositoryButton)
+  }
+  func listOptions() {
+    let menu = NSMenu()
+    menu.addItem(menuItem("Refresh List") { [weak self] in self?.reload() })
+    menu.addItem(menuItem("Clear filters") { [weak self] in self?.clearFilters() })
+    menu.addItem(menuItem("Account…") { [weak self] in self?.accountMenu() })
+    menu.popUp(positioning: nil, at: NSPoint(x: navigationSplit.subviews[0].bounds.width - 32, y: view.bounds.height - 40), in: view)
+  }
+  func revealOpenedRequest() {
+    guard let openedRequest, let client else { return }
+    selected = openedRequest
+    showRequestOverview(openedRequest); loadDetails(openedRequest, client: client)
   }
 }
