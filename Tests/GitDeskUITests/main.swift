@@ -249,6 +249,86 @@ precondition(columnWidths()[2] == 70)
 precondition(resizeTable.tableColumns.allSatisfy { $0.width >= $0.minWidth })
 print("Log column resizing: both dividers, selection, refresh, viewport resize, scrolling and minimum widths passed")
 
+// Hover the real outline in an off-screen window with a neighboring log pane.
+final class BranchHoverDataSource: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate {
+  let names = ["platform-organization-governance", "main", String(repeating: "分支🙂", count: 100)]
+  func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
+    item == nil ? names.count : 0
+  }
+  func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
+    NSNumber(value: index)
+  }
+  func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool { false }
+  func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
+    let name = names[(item as! NSNumber).intValue]
+    let cell = BranchCell()
+    let text = label(name)
+    cell.textField = text
+    cell.toolTip = "feat/\(name) → fork/feat/\(name)"
+    pin(row([cell.branchIcon, text], spacing: 6), to: cell, inset: 3)
+    cell.branchIcon.widthAnchor.constraint(equalToConstant: 14).isActive = true
+    return cell
+  }
+}
+do {
+  let dataSource = BranchHoverDataSource()
+  let window = NSWindow(contentRect: NSRect(x: -10_000, y: -10_000, width: 800, height: 240),
+    styleMask: .borderless, backing: .buffered, defer: false)
+  window.isReleasedWhenClosed = false
+  defer { window.close() }
+  let content = window.contentView!
+  let scroll = NSScrollView(frame: NSRect(x: 80, y: 0, width: 200, height: 240))
+  let outline = BranchOutline(frame: scroll.bounds)
+  let column = NSTableColumn(identifier: .init("branch"))
+  column.minWidth = 1
+  outline.addTableColumn(column)
+  outline.outlineTableColumn = column
+  configureTable(outline)
+  outline.columnAutoresizingStyle = .noColumnAutoresizing
+  outline.autoresizesOutlineColumn = false
+  outline.rowHeight = 25
+  outline.dataSource = dataSource
+  outline.delegate = dataSource
+  outline.contentWidthForItem = { item in
+    let name = dataSource.names[(item as! NSNumber).intValue]
+    return (name as NSString).size(withAttributes: [.font: Theme.font]).width + 32
+  }
+  scroll.documentView = outline
+  content.addSubview(scroll)
+  window.orderBack(nil)
+  outline.reloadData()
+  content.layoutSubtreeIfNeeded()
+  outline.fitContentWidth()
+  func hover(_ row: Int) {
+    let rect = outline.rect(ofRow: row)
+    let point = outline.convert(NSPoint(x: outline.visibleRect.minX + 60, y: rect.midY), to: nil)
+    outline.mouseMoved(with: NSEvent.mouseEvent(with: .mouseMoved, location: point,
+      modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil,
+      eventNumber: 0, clickCount: 0, pressure: 0)!)
+  }
+  for index in [0, 2] {
+    hover(index)
+    let expansion = outline.expansionView!
+    let viewport = content.convert(outline.visibleRect, from: outline)
+    precondition(expansion.frame.maxX <= viewport.maxX, "Branch expansion must never cover the log")
+    precondition(expansion.frame.minX >= content.bounds.minX, "Expansion stays inside the window")
+    precondition(expansion.hitTest(.zero) == nil, "Hover must pass clicks and scrolling through")
+    let cell = outline.view(atColumn: 0, row: index, makeIfNecessary: false) as! BranchCell
+    precondition(cell.toolTip == "feat/\(dataSource.names[index]) → fork/feat/\(dataSource.names[index])",
+      "The full branch/upstream tooltip must remain available during expansion")
+    if index == 0 { precondition(expansion.textLayout.lines == [dataSource.names[index]]) }
+    else { precondition(expansion.textLayout.lines.count > 1) }
+  }
+  hover(1)
+  precondition(outline.expansionView == nil, "A fully visible name needs only its native tooltip")
+  scroll.contentView.scroll(to: NSPoint(x: 100, y: 0))
+  hover(0)
+  precondition(outline.expansionView != nil, "Reveal names clipped by horizontal scrolling too")
+  outline.mouseExited(with: NSEvent())
+  precondition(outline.expansionView == nil && outline.hoveredRow == -1)
+  print("Branch hover: pane boundary, full name, Unicode wrapping, tooltip, scrolling and exit passed")
+}
+
 // Match the screenshot: current local main, favorite origin/main, then dependabot folders.
 do {
   let directory = FileManager.default.temporaryDirectory.appendingPathComponent("gitdesk-branch-tree-" + UUID().uuidString)
