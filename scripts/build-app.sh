@@ -11,6 +11,8 @@ mkdir -p "$APP_DIR/Contents/Resources/Fonts"
 cp assets/fonts/JetBrainsMono-Regular.ttf assets/fonts/JetBrainsMono-Italic.ttf assets/fonts/OFL.txt "$APP_DIR/Contents/Resources/Fonts/"
 mkdir -p "$APP_DIR/Contents/Resources/FileIcons"
 cp assets/file-icons/*.svg assets/file-icons/LICENSE-2.0.txt "$APP_DIR/Contents/Resources/FileIcons/"
+mkdir -p "$APP_DIR/Contents/Resources/ToolWindowIcons"
+cp assets/tool-window-icons/* "$APP_DIR/Contents/Resources/ToolWindowIcons/"
 mkdir -p "$APP_DIR/Contents/Resources/Licenses"
 install -m 644 .build/checkouts/SwiftTerm/LICENSE "$APP_DIR/Contents/Resources/Licenses/SwiftTerm.txt"
 if [[ -d "$BIN_DIR/SwiftTerm_SwiftTerm.bundle" ]]; then

@@ -1,0 +1,7 @@
+Copyright JetBrains s.r.o. and contributors. Apache License 2.0.
+Unmodified IntelliJ Community SVG assets:
+git: platform/icons/src/expui/toolwindows/vcs@20x20.svg and platform/icons/src/expui/toolwindows/vcs@20x20_dark.svg
+commit: platform/icons/src/expui/toolwindows/commit@20x20.svg and platform/icons/src/expui/toolwindows/commit@20x20_dark.svg
+github: plugins/github/github-core/resources/org/jetbrains/plugins/github/expui/pullRequests.svg and plugins/github/github-core/resources/org/jetbrains/plugins/github/expui/pullRequests_dark.svg
+gitlab: plugins/gitlab/shared/resources/org/jetbrains/plugins/gitlab/expui/gitLabToolWindow@20x20.svg and plugins/gitlab/shared/resources/org/jetbrains/plugins/gitlab/expui/gitLabToolWindow@20x20_dark.svg
+terminal: plugins/terminal/resources/icons/expui/toolwindow/terminal@20x20.svg and plugins/terminal/resources/icons/expui/toolwindow/terminal@20x20_dark.svg

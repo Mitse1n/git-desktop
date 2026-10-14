@@ -6,6 +6,7 @@ extension RepositoryController {
     hostingWorkspace.contextChanged = { [weak self] provider in
       guard let self else { return }
       let title = provider?.requestTitle ?? "Code Reviews"
+      self.hostingTab.iconName = provider == .gitlab ? "gitlab" : "github"
       self.hostingTab.toolTip = title
       self.hostingTab.setAccessibilityLabel(title)
       if self.mode == "Reviews" { self.sectionTitle.stringValue = title }

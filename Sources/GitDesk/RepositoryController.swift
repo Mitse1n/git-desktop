@@ -190,8 +190,8 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
   private var bodyEdgeConstraints: [NSLayoutConstraint] = []
   let toolWindowBar = Surface(Theme.chrome)
   var gitTabs: NSStackView!
-  var gitToolTab: ActionButton!
-  var terminalToolTab: ActionButton!
+  var gitToolTab: ToolWindowButton!
+  var terminalToolTab: ToolWindowButton!
   var mainBody = Surface()
   var logBody = Surface()
   var commitBody = Surface()
@@ -204,8 +204,8 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
   var logTab: ActionButton!
   var consoleTab: ActionButton!
   var terminalTab: ActionButton!
-  var hostingTab: ActionButton!
-  var commitTab: ActionButton!
+  var hostingTab: ToolWindowButton!
+  var commitTab: ToolWindowButton!
   var commitButton: ActionButton!
   var commitSections: GitSplitView!
   var commitCompositionInitialized = false
@@ -338,34 +338,34 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     view.addSubview(mainBody)
     logTab = ActionButton("Log") { [weak self] in self?.setMode("Log") }
     terminalTab = ActionButton("Terminal") { [weak self] in self?.setMode("Terminal") }
-    hostingTab = ActionButton(symbol: "arrow.triangle.pull", tooltip: "Pull / Merge Requests", size: 34) { [weak self] in self?.setMode("Reviews") }
+    hostingTab = ToolWindowButton(icon: "github", tooltip: "Pull / Merge Requests") { [weak self] in self?.setMode("Reviews") }
     consoleTab = ActionButton("Console") { [weak self] in self?.setMode("Console") }
-    commitTab = ActionButton(symbol: "checkmark.square", tooltip: "Commit (⌘K)", size: 34) { [weak self] in self?.setMode("Commit") }
+    commitTab = ToolWindowButton(icon: "commit", tooltip: "Commit (⌘K)") { [weak self] in self?.setMode("Commit") }
     for tab in [logTab, consoleTab, terminalTab] { tab?.isTab = true }
     toolWindowBar.translatesAutoresizingMaskIntoConstraints = false
     toolWindowBar.setAccessibilityLabel("Left tool window bar")
     view.addSubview(toolWindowBar)
-    gitToolTab = ActionButton(symbol: "point.3.connected.trianglepath.dotted", tooltip: "Git (⌘1)", size: 34) { [weak self] in self?.setMode("Log") }
-    terminalToolTab = ActionButton(symbol: "terminal", tooltip: "Terminal (⌘3)", size: 34) { [weak self] in self?.setMode("Terminal") }
-    let bottomTools = NSStackView(views: [terminalToolTab, gitToolTab])
+    gitToolTab = ToolWindowButton(icon: "git", tooltip: "Git (⌘1)") { [weak self] in self?.setMode("Log") }
+    terminalToolTab = ToolWindowButton(icon: "terminal", tooltip: "Terminal (⌘3)") { [weak self] in self?.setMode("Terminal") }
+    let bottomTools = NSStackView(views: [terminalToolTab])
     bottomTools.orientation = .vertical
-    bottomTools.spacing = 8
+    bottomTools.spacing = 0
     bottomTools.translatesAutoresizingMaskIntoConstraints = false
     toolWindowBar.addSubview(bottomTools)
-    let tools = NSStackView(views: [commitTab, hostingTab])
+    let tools = NSStackView(views: [gitToolTab, commitTab, hostingTab])
     tools.orientation = .vertical
-    tools.spacing = 8
+    tools.spacing = 0
     tools.translatesAutoresizingMaskIntoConstraints = false
     toolWindowBar.addSubview(tools)
     NSLayoutConstraint.activate([
       toolWindowBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
       toolWindowBar.topAnchor.constraint(equalTo: header.bottomAnchor),
       toolWindowBar.bottomAnchor.constraint(equalTo: mainBody.bottomAnchor),
-      toolWindowBar.widthAnchor.constraint(equalToConstant: 44),
+      toolWindowBar.widthAnchor.constraint(equalToConstant: 40),
       bottomTools.centerXAnchor.constraint(equalTo: toolWindowBar.centerXAnchor),
-      bottomTools.bottomAnchor.constraint(equalTo: toolWindowBar.bottomAnchor, constant: -8),
+      bottomTools.bottomAnchor.constraint(equalTo: toolWindowBar.bottomAnchor, constant: 0),
       tools.centerXAnchor.constraint(equalTo: toolWindowBar.centerXAnchor),
-      tools.topAnchor.constraint(equalTo: toolWindowBar.topAnchor, constant: 8),
+      tools.topAnchor.constraint(equalTo: toolWindowBar.topAnchor, constant: 0),
     ])
     gitTabs = row([logTab, consoleTab, terminalTab], spacing: 16)
     let tabSpacer = NSView()
@@ -782,16 +782,14 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     hostingBody.isHidden = mode != "Reviews"
     if mode == "Terminal" { terminalWorkspace.activate(at: repository?.workingDirectory) }
     if mode == "Reviews" { hostingWorkspace.configure(repository: repository) }
-    for (name, button) in [("Log", logTab), ("Console", consoleTab), ("Commit", commitTab), ("Terminal", terminalTab), ("Reviews", hostingTab)] {
+    for (name, button) in [("Log", logTab), ("Console", consoleTab), ("Terminal", terminalTab)] {
       button?.contentTintColor = mode == name ? Theme.blue : Theme.text
       button?.isBordered = mode == name
     }
   }
   private func updateToolWindowSelection() {
     for (name, button) in [("Commit", commitTab), ("Reviews", hostingTab), ("Log", gitToolTab), ("Terminal", terminalToolTab)] {
-      button?.wantsLayer = true
-      button?.layer?.cornerRadius = 6
-      button?.layer?.backgroundColor = (mode == name ? Theme.selection : Theme.chrome).cgColor
+      button?.selected = mode == name
     }
   }
   func appendConsole(_ command: String, output: String, status: Int32) {

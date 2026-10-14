@@ -80,6 +80,34 @@ func runFlowChecks() throws {
     check(controller.commitTab.isDescendant(of: controller.toolWindowBar)
       && controller.hostingTab.isDescendant(of: controller.toolWindowBar),
       "Commit and Reviews use the persistent left tool window bar")
+    let tools = [controller.gitToolTab!, controller.commitTab!, controller.hostingTab!, controller.terminalToolTab!]
+    let positions = tools.map { controller.toolWindowBar.convert($0.bounds, from: $0) }
+    check(positions[0].minY > positions[1].minY && positions[1].minY > positions[2].minY,
+      "Git is the first left tool window, followed by Commit and Reviews")
+    check(tools.allSatisfy { $0.bounds.size == NSSize(width: 40, height: 40)
+      && $0.image?.size == NSSize(width: 20, height: 20) },
+      "Every tool window uses a 40-point target and an available 20-point IntelliJ SVG")
+    if let output = ProcessInfo.processInfo.environment["GITDESK_TOOLBAR_SCREENSHOTS"] {
+      let outputURL = URL(fileURLWithPath: output)
+      try FileManager.default.createDirectory(at: outputURL, withIntermediateDirectories: true)
+      controller.repository = repo
+      controller.snapshot = try repo.snapshot()
+      controller.updateUI()
+      let screenshotTheme = Theme.current
+      defer { Theme.apply(screenshotTheme, persist: false) }
+      for theme in AppTheme.allCases {
+        Theme.apply(theme, persist: false)
+        controller.setMode("Commit")
+        if let index = controller.workingRows.firstIndex(where: { $0.file?.path == "first.txt" }) {
+          controller.changesTable.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+        }
+        if let diff = controller.inlineDiff { drain(diff.queue) }
+        controller.view.layoutSubtreeIfNeeded()
+        let bitmap = controller.view.bitmapImageRepForCachingDisplay(in: controller.view.bounds)!
+        controller.view.cacheDisplay(in: controller.view.bounds, to: bitmap)
+        try bitmap.representation(using: .png, properties: [:])!.write(to: outputURL.appendingPathComponent("commit-\(theme).png"))
+      }
+    }
     controller.setMode("Commit")
     check(controller.gitTabs.isHidden && !controller.commitBody.isHidden,
       "Commit has its own tool window header without Git tabs")
