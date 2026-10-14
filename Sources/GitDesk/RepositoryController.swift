@@ -188,6 +188,10 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
   let progress = NSProgressIndicator()
   private var themeObserver: NSObjectProtocol?
   private var bodyEdgeConstraints: [NSLayoutConstraint] = []
+  let toolWindowBar = Surface(Theme.chrome)
+  var gitTabs: NSStackView!
+  var gitToolTab: ActionButton!
+  var terminalToolTab: ActionButton!
   var mainBody = Surface()
   var logBody = Surface()
   var commitBody = Surface()
@@ -300,6 +304,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     logTable.dismissTextExpansion()
     branchOutline.dismissTextExpansion()
     Theme.refresh(view)
+    updateToolWindowSelection()
   }
   func buildUI() {
     repoLabel.handler = { [weak self] in self?.showRecent() }
@@ -333,10 +338,36 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     view.addSubview(mainBody)
     logTab = ActionButton("Log") { [weak self] in self?.setMode("Log") }
     terminalTab = ActionButton("Terminal") { [weak self] in self?.setMode("Terminal") }
-    hostingTab = ActionButton("Reviews") { [weak self] in self?.setMode("Reviews") }
+    hostingTab = ActionButton(symbol: "arrow.triangle.pull", tooltip: "Pull / Merge Requests", size: 34) { [weak self] in self?.setMode("Reviews") }
     consoleTab = ActionButton("Console") { [weak self] in self?.setMode("Console") }
-    commitTab = ActionButton("Commit") { [weak self] in self?.setMode("Commit") }
-    for tab in [logTab, consoleTab, commitTab, terminalTab, hostingTab] { tab?.isTab = true }
+    commitTab = ActionButton(symbol: "checkmark.square", tooltip: "Commit (⌘K)", size: 34) { [weak self] in self?.setMode("Commit") }
+    for tab in [logTab, consoleTab, terminalTab] { tab?.isTab = true }
+    toolWindowBar.translatesAutoresizingMaskIntoConstraints = false
+    toolWindowBar.setAccessibilityLabel("Left tool window bar")
+    view.addSubview(toolWindowBar)
+    gitToolTab = ActionButton(symbol: "point.3.connected.trianglepath.dotted", tooltip: "Git (⌘1)", size: 34) { [weak self] in self?.setMode("Log") }
+    terminalToolTab = ActionButton(symbol: "terminal", tooltip: "Terminal (⌘3)", size: 34) { [weak self] in self?.setMode("Terminal") }
+    let bottomTools = NSStackView(views: [terminalToolTab, gitToolTab])
+    bottomTools.orientation = .vertical
+    bottomTools.spacing = 8
+    bottomTools.translatesAutoresizingMaskIntoConstraints = false
+    toolWindowBar.addSubview(bottomTools)
+    let tools = NSStackView(views: [commitTab, hostingTab])
+    tools.orientation = .vertical
+    tools.spacing = 8
+    tools.translatesAutoresizingMaskIntoConstraints = false
+    toolWindowBar.addSubview(tools)
+    NSLayoutConstraint.activate([
+      toolWindowBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+      toolWindowBar.topAnchor.constraint(equalTo: header.bottomAnchor),
+      toolWindowBar.bottomAnchor.constraint(equalTo: mainBody.bottomAnchor),
+      toolWindowBar.widthAnchor.constraint(equalToConstant: 44),
+      bottomTools.centerXAnchor.constraint(equalTo: toolWindowBar.centerXAnchor),
+      bottomTools.bottomAnchor.constraint(equalTo: toolWindowBar.bottomAnchor, constant: -8),
+      tools.centerXAnchor.constraint(equalTo: toolWindowBar.centerXAnchor),
+      tools.topAnchor.constraint(equalTo: toolWindowBar.topAnchor, constant: 8),
+    ])
+    gitTabs = row([logTab, consoleTab, terminalTab], spacing: 16)
     let tabSpacer = NSView()
     operationControls = row([
       operationLabel,
@@ -352,7 +383,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     operationControls.isHidden = true
     let tabs = row(
       [
-        sectionTitle, logTab, consoleTab, commitTab, terminalTab, hostingTab, tabSpacer, operationControls,
+        sectionTitle, gitTabs, tabSpacer, operationControls,
         ActionButton(symbol: "arrow.clockwise", tooltip: "Refresh (⌘R)") { [weak self] in
           self?.refresh()
         },
@@ -380,7 +411,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     status.translatesAutoresizingMaskIntoConstraints = false
     view.addSubview(status)
     bodyEdgeConstraints = [
-      mainBody.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: Theme.current.isIsland ? 10 : 0),
+      mainBody.leadingAnchor.constraint(equalTo: toolWindowBar.trailingAnchor, constant: Theme.current.isIsland ? 10 : 0),
       mainBody.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: Theme.current.isIsland ? -10 : 0),
     ]
     NSLayoutConstraint.activate(bodyEdgeConstraints)
@@ -740,7 +771,9 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
   ) -> CGFloat { splitView.bounds.width - (dividerIndex == 0 ? 600 : 230) }
   func setMode(_ mode: String) {
     self.mode = mode
-    sectionTitle.stringValue = mode == "Commit" ? "Commit" : "Git"
+    sectionTitle.stringValue = mode == "Commit" ? "Commit" : mode == "Reviews" ? (hostingWorkspace.context?.provider.requestTitle ?? "Code Reviews") : "Git"
+    gitTabs.isHidden = mode == "Commit" || mode == "Reviews"
+    updateToolWindowSelection()
     if mode == "Commit" { layoutCommitComposition() }
     logBody.isHidden = mode != "Log"
     commitBody.isHidden = mode != "Commit"
@@ -752,6 +785,13 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     for (name, button) in [("Log", logTab), ("Console", consoleTab), ("Commit", commitTab), ("Terminal", terminalTab), ("Reviews", hostingTab)] {
       button?.contentTintColor = mode == name ? Theme.blue : Theme.text
       button?.isBordered = mode == name
+    }
+  }
+  private func updateToolWindowSelection() {
+    for (name, button) in [("Commit", commitTab), ("Reviews", hostingTab), ("Log", gitToolTab), ("Terminal", terminalToolTab)] {
+      button?.wantsLayer = true
+      button?.layer?.cornerRadius = 6
+      button?.layer?.backgroundColor = (mode == name ? Theme.selection : Theme.chrome).cgColor
     }
   }
   func appendConsole(_ command: String, output: String, status: Int32) {

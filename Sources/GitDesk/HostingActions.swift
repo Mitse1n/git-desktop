@@ -3,6 +3,13 @@ import GitDeskCore
 
 extension RepositoryController {
   func buildHosting() {
+    hostingWorkspace.contextChanged = { [weak self] provider in
+      guard let self else { return }
+      let title = provider?.requestTitle ?? "Code Reviews"
+      self.hostingTab.toolTip = title
+      self.hostingTab.setAccessibilityLabel(title)
+      if self.mode == "Reviews" { self.sectionTitle.stringValue = title }
+    }
     addChild(hostingWorkspace)
     pin(hostingWorkspace.view, to: hostingBody)
     hostingWorkspace.checkout = { [weak self] context, request in self?.checkoutHostedRequest(context, request: request) }

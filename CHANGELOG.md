@@ -6,6 +6,8 @@ Notable changes are recorded here. The project is in early development; the app 
 
 ### Fixed
 
+- Align Commit and GitHub/GitLab review navigation with IntelliJ tool windows: left toolbar entries, bounded commit sidebar, request list/overview navigation and changed files on the left, and review content on the right. Preserve access to Git and Terminal from the bottom of the toolbar.
+
 - Prune hidden history paths that cannot reach a visible commit before graph projection, preserving parent order, lanes, colors and geometry while avoiding repeated traversal beyond the visible history boundary.
 
 - Keep the repository window vertically resizable when the embedded terminal has no sessions; its empty-state label no longer pulls hidden workspace and window heights down to their fitting size.

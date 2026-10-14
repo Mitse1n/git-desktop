@@ -205,7 +205,9 @@ extension RepositoryController {
     let workingSplit = GitSplitView()
     workingSplit.isVertical = true
     workingSplit.dividerStyle = .thin
-    workingSplit.autosaveName = "CommitSplit"
+    workingSplit.autosaveName = "CommitToolWindowSplit"
+    commitSections.widthAnchor.constraint(greaterThanOrEqualToConstant: 320).isActive = true
+    commitSections.widthAnchor.constraint(lessThanOrEqualToConstant: 520).isActive = true
     workingSplit.addArrangedSubview(commitSections)
     workingSplit.addArrangedSubview(hint)
     pin(workingSplit, to: commitBody)

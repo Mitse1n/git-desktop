@@ -76,6 +76,19 @@ func runFlowChecks() throws {
       resizeCheck(mode, height: tallHeight)
       resizeCheck(mode, height: 640)
     }
+    let controller = owner.repositoryController
+    check(controller.commitTab.isDescendant(of: controller.toolWindowBar)
+      && controller.hostingTab.isDescendant(of: controller.toolWindowBar),
+      "Commit and Reviews use the persistent left tool window bar")
+    controller.setMode("Commit")
+    check(controller.gitTabs.isHidden && !controller.commitBody.isHidden,
+      "Commit has its own tool window header without Git tabs")
+    controller.setMode("Reviews")
+    check(controller.gitTabs.isHidden && !controller.hostingBody.isHidden,
+      "Reviews has its own tool window header without Git tabs")
+    controller.gitToolTab.performClick(nil)
+    check(controller.mode == "Log" && !controller.gitTabs.isHidden,
+      "The left Git button returns from Reviews to Log")
     let terminal = owner.repositoryController.terminalWorkspace
     owner.repositoryController.repository = repo
     terminal.repositoryURL = directory

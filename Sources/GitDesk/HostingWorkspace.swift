@@ -14,11 +14,19 @@ final class HostingWorkspace: NSViewController, NSTableViewDataSource, NSTableVi
   private let threadPicker = NSPopUpButton()
   private var threads: [HostedThread] = []
   private var sectionButtons: [ActionButton] = []
-  private let fileSplit = NSSplitView()
-  private var initializedFileSplit = false
+  let navigationSplit = NSSplitView()
+  let requestList = Surface()
+  let requestOverview = Surface()
+  private let requestTitle = label("", bold: true)
+  private let requestBranches = label("", color: Theme.blue, size: 12)
+  private let requestAuthor = label("", color: Theme.muted, size: 12)
+  private var initializedNavigation = false
   private var requests: [HostedRequest] = [], displayed: [HostedRequest] = [], files: [HostedFile] = []
   private var remotes: [(name: String, url: String)] = []
-  private(set) var context: HostingRepository?
+  var contextChanged: ((HostingProvider?) -> Void)?
+  private(set) var context: HostingRepository? {
+    didSet { contextChanged?(context?.provider) }
+  }
   private var client: HostingClient?
   private var repo: GitRepository?
   private var page = 1, hasMore = false
@@ -36,12 +44,13 @@ final class HostingWorkspace: NSViewController, NSTableViewDataSource, NSTableVi
     statePicker.addItems(withTitles: ["Open", "Closed", "All"])
     statePicker.target = self; statePicker.action = #selector(reloadFromFilter)
     search.placeholderString = "Title, author or number"; search.delegate = self
-    search.widthAnchor.constraint(greaterThanOrEqualToConstant: 160).isActive = true
-    let toolbar = row([heading, remotePicker, statePicker, search, NSView(),
+    search.widthAnchor.constraint(greaterThanOrEqualToConstant: 100).isActive = true
+    let toolbar = row([heading, NSView(),
       ActionButton(symbol: "arrow.clockwise", tooltip: "Refresh Requests") { [weak self] in self?.reload() },
-      ActionButton("Connect Account…") { [weak self] in self?.connect() },
-      ActionButton("Account…") { [weak self] in self?.accountMenu() },
-      ActionButton("Create…") { [weak self] in self?.createRequest() }], spacing: 8)
+      ActionButton(symbol: "person.crop.circle", tooltip: "Account…") { [weak self] in self?.accountMenu() },
+      ActionButton(symbol: "plus", tooltip: "Create Request…") { [weak self] in self?.createRequest() }], spacing: 4)
+    let filters = row([remotePicker, statePicker, NSView()], spacing: 6)
+    let searchRow = row([search])
     for table in [requestsTable, filesTable] {
       configureTable(table); table.delegate = self; table.dataSource = self; table.rowHeight = 48
       table.addTableColumn(NSTableColumn(identifier: .init("content")))
@@ -50,49 +59,74 @@ final class HostingWorkspace: NSViewController, NSTableViewDataSource, NSTableVi
     filesTable.setAccessibilityLabel("Changed files")
     filesTable.target = self; filesTable.doubleAction = #selector(openFileDiff)
     requestsTable.menuProvider = { [weak self] in self?.requestMenu() ?? NSMenu() }
-    let left = makePanel(row([label("Requests", bold: true), NSView(), ActionButton("Load More") { [weak self] in self?.reload(more: true) }]), body: scrollView(requestsTable))
-    left.widthAnchor.constraint(greaterThanOrEqualToConstant: 240).isActive = true
-    left.widthAnchor.constraint(lessThanOrEqualToConstant: 420).isActive = true
+    let list = makePanel(row([label("Requests", bold: true), NSView(), ActionButton("Load More") { [weak self] in self?.reload(more: true) }]), body: scrollView(requestsTable), height: 32)
+    pin(makePanel(filters, body: makePanel(searchRow, body: list, height: 34), height: 32), to: requestList)
     for text in [overview, patch, discussion, checks] {
       text.isEditable = false; text.isRichText = false; text.font = Theme.font
       text.textColor = Theme.text; text.backgroundColor = Theme.background
       text.textContainerInset = NSSize(width: 14, height: 12)
     }
     patch.font = DiffFont.regular()
+    filesTable.rowHeight = 28
     func tab(_ name: String, _ content: NSView) {
       let item = NSTabViewItem(identifier: name); item.label = name; item.view = content; tabs.addTabViewItem(item)
     }
     tab("Overview", scrollView(overview))
-    fileSplit.isVertical = false; fileSplit.dividerStyle = .thin
-    fileSplit.addArrangedSubview(scrollView(filesTable)); fileSplit.addArrangedSubview(scrollView(patch))
-    tab("Files", fileSplit)
+    tab("Files", scrollView(patch))
     let threadToolbar = row([label("Line discussion:"), threadPicker,
       ActionButton("Reply…") { [weak self] in self?.replyToThread() },
       ActionButton("Resolve / Unresolve") { [weak self] in self?.resolveThread() }, NSView()])
-    tab("Discussion", makePanel(threadToolbar, body: scrollView(discussion)))
+    tab("Timeline", makePanel(threadToolbar, body: scrollView(discussion)))
     tab("Checks & Reviews", scrollView(checks))
-    let actions = row([
-      ActionButton("Check Out") { [weak self] in self?.checkOut() },
-      ActionButton("Show Diff") { [weak self] in self?.openFullDiff() },
-      ActionButton("Comment…") { [weak self] in self?.sendComment() },
-      ActionButton("Review…") { [weak self] in self?.reviewMenu() },
-      ActionButton("Merge…") { [weak self] in self?.mergeMenu() },
-      ActionButton("Close / Reopen…") { [weak self] in self?.changeState() },
-      NSView(), ActionButton(symbol: "arrow.up.right.square", tooltip: "Open on Server") { [weak self] in self?.openBrowser() }
-    ], spacing: 6)
-    for case let button as ActionButton in actions.arrangedSubviews { requestButtons[button.title] = button }
-    updateActionState()
+    let checkout = ActionButton("Check Out") { [weak self] in self?.checkOut() }
+    let diff = ActionButton("Show Diff") { [weak self] in self?.openFullDiff() }
+    let comment = ActionButton("Comment…") { [weak self] in self?.sendComment() }
+    let review = ActionButton("Review…") { [weak self] in self?.reviewMenu() }
+    let merge = ActionButton("Merge…") { [weak self] in self?.mergeMenu() }
+    let close = ActionButton("Close / Reopen…") { [weak self] in self?.changeState() }
+    for button in [checkout, diff, comment, review, merge, close] { requestButtons[button.title] = button }
+    requestTitle.lineBreakMode = .byTruncatingTail
+    requestTitle.usesSingleLineMode = true
+    let summary = NSStackView(views: [
+      row([ActionButton("All Requests", symbol: "chevron.left") { [weak self] in self?.showRequestList() }, NSView(),
+        ActionButton(symbol: "arrow.up.right.square", tooltip: "Open on Server") { [weak self] in self?.openBrowser() }]),
+      requestTitle, requestAuthor, requestBranches,
+      row([checkout, diff, NSView()]), row([review, merge, close, NSView()]), row([comment, NSView()])])
+    summary.orientation = .vertical; summary.alignment = .leading; summary.spacing = 6
+    summary.translatesAutoresizingMaskIntoConstraints = false
+    let changedFiles = makePanel(row([label("Changes", bold: true), NSView()]), body: scrollView(filesTable), height: 32)
+    changedFiles.translatesAutoresizingMaskIntoConstraints = false
+    requestOverview.addSubview(summary); requestOverview.addSubview(changedFiles)
+    NSLayoutConstraint.activate([
+      summary.topAnchor.constraint(equalTo: requestOverview.topAnchor, constant: 6),
+      summary.leadingAnchor.constraint(equalTo: requestOverview.leadingAnchor, constant: 12),
+      summary.trailingAnchor.constraint(equalTo: requestOverview.trailingAnchor, constant: -12),
+      changedFiles.topAnchor.constraint(equalTo: summary.bottomAnchor, constant: 12),
+      changedFiles.leadingAnchor.constraint(equalTo: requestOverview.leadingAnchor),
+      changedFiles.trailingAnchor.constraint(equalTo: requestOverview.trailingAnchor),
+      changedFiles.bottomAnchor.constraint(equalTo: requestOverview.bottomAnchor),
+    ])
+    let navigation = Surface()
+    for panel in [requestList, requestOverview] { pin(panel, to: navigation) }
+    showRequestList()
+    status.maximumNumberOfLines = 2
+    status.lineBreakMode = .byTruncatingMiddle
+    let left = makePanel(toolbar, body: makePanel(row([status]), body: navigation, height: 44), height: 36)
+    left.widthAnchor.constraint(greaterThanOrEqualToConstant: 340).isActive = true
+    left.widthAnchor.constraint(lessThanOrEqualToConstant: 480).isActive = true
     tabs.tabViewType = .noTabsNoBorder
-    sectionButtons = ["Overview", "Files", "Discussion", "Checks & Reviews"].enumerated().map { index, title in
+    sectionButtons = ["Overview", "Files", "Timeline", "Checks & Reviews"].enumerated().map { index, title in
       let button = ActionButton(title) { [weak self] in self?.selectSection(index) }
       button.isTab = true
       return button
     }
     let sections = row(sectionButtons + [NSView()], spacing: 14)
-    let right = makePanel(actions, body: makePanel(sections, body: tabs, height: 34))
-    let split = NSSplitView(); split.isVertical = true; split.dividerStyle = .thin
-    split.addArrangedSubview(left); split.addArrangedSubview(right)
-    pin(makePanel(toolbar, body: makePanel(row([status]), body: split)), to: view)
+    let right = makePanel(sections, body: tabs, height: 36)
+    navigationSplit.isVertical = true; navigationSplit.dividerStyle = .thin
+    navigationSplit.autosaveName = "ReviewToolWindowSplit"
+    navigationSplit.addArrangedSubview(left); navigationSplit.addArrangedSubview(right)
+    pin(navigationSplit, to: view)
+    updateActionState()
     overview.string = "Select a request to view its description, changed files, discussion, reviews and CI checks."
     selectSection(0)
   }
@@ -104,19 +138,32 @@ final class HostingWorkspace: NSViewController, NSTableViewDataSource, NSTableVi
     }
     view.needsLayout = true
     view.layoutSubtreeIfNeeded()
-    layoutFileSplit()
   }
-  override func viewDidLayout() { super.viewDidLayout(); layoutFileSplit() }
-  private func layoutFileSplit() {
-    guard tabs.indexOfTabViewItem(tabs.selectedTabViewItem!) == 1,
-      !initializedFileSplit, fileSplit.bounds.height > 100 else { return }
-    initializedFileSplit = true
-    fileSplit.adjustSubviews()
-    fileSplit.setPosition(fileSplit.bounds.height * 0.35, ofDividerAt: 0)
+  override func viewDidLayout() {
+    super.viewDidLayout()
+    if !initializedNavigation, navigationSplit.bounds.width > 600 {
+      initializedNavigation = true
+      navigationSplit.setPosition(380, ofDividerAt: 0)
+    }
+  }
+  func showRequestList() {
+    detailTask?.cancel()
+    requestsTable.deselectAll(nil)
+    selected = nil; detailReady = false
+    requestList.isHidden = false
+    requestOverview.isHidden = true
+  }
+  private func showRequestOverview(_ request: HostedRequest) {
+    requestTitle.stringValue = "#\(request.number) \(request.title)"
+    requestTitle.toolTip = request.title
+    requestBranches.stringValue = "\(request.source) → \(request.target)"
+    requestAuthor.stringValue = "\(request.author) · \(request.draft ? "Draft" : request.state)"
+    requestList.isHidden = true
+    requestOverview.isHidden = false
   }
   func useClient(_ client: HostingClient, repository: GitRepository?) {
     _ = view
-    task?.cancel(); detailTask?.cancel(); selected = nil; detailReady = false
+    task?.cancel(); detailTask?.cancel(); selected = nil; detailReady = false; showRequestList()
     self.repo = repository; self.context = client.repository; self.client = client
     heading.stringValue = client.repository.provider.requestTitle
     if remotePicker.numberOfItems == 0 { remotePicker.addItem(withTitle: client.repository.remote) }
@@ -133,7 +180,7 @@ final class HostingWorkspace: NSViewController, NSTableViewDataSource, NSTableVi
   func configure(repository: GitRepository?, force: Bool = false) {
     _ = view
     guard force || repo?.workingDirectory != repository?.workingDirectory else { return }
-    repo = repository; task?.cancel(); detailTask?.cancel(); selected = nil
+    repo = repository; task?.cancel(); detailTask?.cancel(); selected = nil; detailReady = false; showRequestList()
     remotes = []; requests = []; displayed = []; files = []; requestsTable.reloadData(); filesTable.reloadData()
     remotePicker.removeAllItems(); context = nil; client = nil
     overview.string = "Select a request to view its description, changed files, discussion, reviews and CI checks."
@@ -155,7 +202,7 @@ final class HostingWorkspace: NSViewController, NSTableViewDataSource, NSTableVi
   @objc private func remoteChanged() {
     guard !writing else { return }
     task?.cancel(); detailTask?.cancel(); selected = nil; detailReady = false
-    context = nil; client = nil
+    context = nil; client = nil; showRequestList()
     requests = []; displayed = []; files = []; requestsTable.reloadData(); filesTable.reloadData()
     overview.string = "Select a request to view its details."; discussion.string = ""; checks.string = ""; patch.string = ""
     let index = remotePicker.indexOfSelectedItem
@@ -236,12 +283,13 @@ final class HostingWorkspace: NSViewController, NSTableViewDataSource, NSTableVi
         offset += length + 1
       }
       patch.textStorage?.setAttributedString(text)
+      selectSection(1)
       return
     }
     let index = requestsTable.selectedRow
     guard displayed.indices.contains(index), let client else { detailTask?.cancel(); selected = nil; detailReady = false; return }
     detailReady = false
-    selected = displayed[index]; loadDetails(selected!, client: client)
+    selected = displayed[index]; showRequestOverview(selected!); selectSection(0); loadDetails(selected!, client: client)
   }
   private func loadDetails(_ request: HostedRequest, client: HostingClient) {
     detailTask?.cancel(); files = []; filesTable.reloadData(); patch.string = ""
@@ -251,7 +299,7 @@ final class HostingWorkspace: NSViewController, NSTableViewDataSource, NSTableVi
       do {
         let detail = try await client.details(request.number)
         guard let self, !Task.isCancelled else { return }
-        self.selected = detail; self.detailReady = true
+        self.selected = detail; self.detailReady = true; self.showRequestOverview(detail)
         self.overview.string = "#\(detail.number) \(detail.title)\n\n\(detail.source) → \(detail.target)\n\(detail.author) · \(detail.state)\(detail.draft ? " · Draft" : "")\nMerge status: \(detail.mergeStatus)\n\n\(detail.body)"
         do {
           let files = try await client.files(detail.number)
@@ -330,7 +378,7 @@ final class HostingWorkspace: NSViewController, NSTableViewDataSource, NSTableVi
       do { try HostingCredentials.remove(context.credentialKey); self.client = HostingClient(repository: context, token: ""); self.reload() }
       catch { self.status.stringValue = error.localizedDescription }
     })
-    menu.popUp(positioning: nil, at: NSPoint(x: view.bounds.maxX - 180, y: view.bounds.maxY - 40), in: view)
+    menu.popUp(positioning: nil, at: NSPoint(x: navigationSplit.subviews[0].frame.maxX - 80, y: view.bounds.maxY - 36), in: view)
   }
   private func prompt(_ title: String, fields: [(String, String)], multiline: Bool = false, extra: NSView? = nil) -> [String]? {
     let alert = NSAlert(); alert.messageText = title
@@ -394,7 +442,7 @@ final class HostingWorkspace: NSViewController, NSTableViewDataSource, NSTableVi
         self.write("Submitting review") { try await $0.review(request, action: event, body: values[0]) }
       })
     }
-    menu.popUp(positioning: nil, at: NSPoint(x: 540, y: view.bounds.maxY - 90), in: view)
+    if let anchor = requestButtons["Review…"] { menu.popUp(positioning: nil, at: NSPoint(x: 0, y: anchor.bounds.maxY), in: anchor) }
   }
   private func mergeMenu() {
     guard detailReady, let request = selected, request.state == "open" || request.state == "opened", !request.draft else { return }
@@ -409,7 +457,7 @@ final class HostingWorkspace: NSViewController, NSTableViewDataSource, NSTableVi
         self.write("Merging request") { try await $0.merge(request, method: method) }
       })
     }
-    menu.popUp(positioning: nil, at: NSPoint(x: 650, y: view.bounds.maxY - 90), in: view)
+    if let anchor = requestButtons["Merge…"] { menu.popUp(positioning: nil, at: NSPoint(x: 0, y: anchor.bounds.maxY), in: anchor) }
   }
   private func changeState() {
     guard let request = selected, request.state != "merged" else { return }

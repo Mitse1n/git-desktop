@@ -68,6 +68,9 @@ func runHostingChecks() throws {
     func allTexts() -> [String] { workspace.tabs.tabViewItems.compactMap(\.view).flatMap(texts) }
     workspace.useClient(client, repository: nil)
     waitFor { workspace.requestsTable.numberOfRows == 2 }
+    precondition(!workspace.requestList.isHidden && workspace.requestOverview.isHidden)
+    workspace.view.layoutSubtreeIfNeeded()
+    precondition(workspace.navigationSplit.subviews[0].frame.width >= 340 && workspace.navigationSplit.subviews[0].frame.width <= 480)
     workspace.requestsTable.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
     precondition(buttons(workspace.view).first { $0.title == "Check Out" }?.isEnabled == false)
     RunLoop.current.run(until: Date().addingTimeInterval(0.02))
@@ -77,6 +80,8 @@ func runHostingChecks() throws {
     precondition(allTexts().contains { $0.hasPrefix("#2 Demo review 2") }, "Cancelled request details must never replace the latest selection")
     precondition(!allTexts().contains { $0.hasPrefix("#1 Demo review 1") })
     precondition(buttons(workspace.view).first { $0.title == "Merge…" }?.isEnabled == true)
+    precondition(workspace.requestList.isHidden && !workspace.requestOverview.isHidden,
+      "Opening a request replaces the left list with its overview and changed files")
     workspace.filesTable.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
     precondition(allTexts().contains { $0.contains("@@ -1 +1 @@") })
     workspace.view.layoutSubtreeIfNeeded()
@@ -90,6 +95,11 @@ func runHostingChecks() throws {
         try bitmap.representation(using: .png, properties: [:])!.write(to: directory.appendingPathComponent(provider.rawValue + "-\(index).png"))
       }
     }
+    workspace.showRequestList()
+    precondition(!workspace.requestList.isHidden && workspace.requestOverview.isHidden)
+    workspace.requestsTable.selectRowIndexes(IndexSet(integer: 1), byExtendingSelection: false)
+    waitFor { buttons(workspace.view).first { $0.title == "Check Out" }?.isEnabled == true }
+    precondition(!workspace.requestOverview.isHidden, "Back navigation allows reopening the same request")
     window.close()
   }
   print("Hosting UI: GitHub/GitLab lists, details, files, discussion, action states and stale-selection cancellation passed")
