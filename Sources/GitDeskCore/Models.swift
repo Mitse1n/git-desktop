@@ -189,13 +189,33 @@ public enum CommitGraph {
     let parentsByHash = Dictionary(
       source.map { ($0.hash, $0.parents) },
       uniquingKeysWith: { a, _ in a })
+    // Projection stops at the first visible ancestor. Old history beyond the
+    // visible boundary cannot contribute an edge, but traversing it separately
+    // from every boundary/merge parent costs O(visible * history). Mark paths
+    // that can reach any visible commit once, in the reverse direction. This
+    // also works for filtered, incomplete and unordered topology; the original
+    // DFS below still determines parent order and deduplicates converging paths.
+    let canReachVisible: Set<String> = {
+      var children: [String: [String]] = [:]
+      for (child, parents) in parentsByHash where !visible.contains(child) {
+        for parent in parents { children[parent, default: []].append(child) }
+      }
+      var reachable = visible
+      var pending = Array(visible)
+      while let hash = pending.popLast() {
+        for child in children[hash] ?? [] where reachable.insert(child).inserted {
+          pending.append(child)
+        }
+      }
+      return reachable
+    }()
     func projectedParents(_ commit: Commit) -> [String] {
       var result: [String] = []
       var visited = Set<String>()
       for parent in commit.parents {
         var stack = [parent]
         while let hash = stack.popLast() {
-          guard visited.insert(hash).inserted else { continue }
+          guard canReachVisible.contains(hash), visited.insert(hash).inserted else { continue }
           if visible.contains(hash) {
             result.append(hash)
           } else {

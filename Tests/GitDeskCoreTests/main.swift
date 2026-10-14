@@ -120,6 +120,7 @@ let diffCases: [(String, () -> Void)] = [
   ("Graph branch order and disconnected heads", { DiffAndGraphTests().testGraphBranchOrderAndDisconnectedHeads() }),
   ("Graph connections meet commit centers", { DiffAndGraphTests().testGraphConnectionsMeetCommitCenters() }),
   ("Filtered graph ancestry", { DiffAndGraphTests().testFilteredGraphProjectsHiddenAncestors() }),
+  ("Graph projection across hidden merges and old history", { DiffAndGraphTests().testGraphProjectionAcrossHiddenMergeAndOldBoundary() }),
   ("Line alignment", { DiffAndGraphTests().testLineAlignmentAndNumbers() }),
   ("Deleted and empty files", { DiffAndGraphTests().testDeletionAndEmptyFiles() }),
   (

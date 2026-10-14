@@ -6,6 +6,8 @@ Notable changes are recorded here. The project is in early development; the app 
 
 ### Fixed
 
+- Prune hidden history paths that cannot reach a visible commit before graph projection, preserving parent order, lanes, colors and geometry while avoiding repeated traversal beyond the visible history boundary.
+
 - Keep the repository window vertically resizable when the embedded terminal has no sessions; its empty-state label no longer pulls hidden workspace and window heights down to their fitting size.
 
 - Preserve current-branch background outside rounded commit selections, and redraw viewport-anchored row backgrounds during horizontal scrolling to prevent repeated hover/selection edge trails in narrow branch/tag panes.

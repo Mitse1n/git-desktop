@@ -62,6 +62,9 @@ func runFlowChecks() throws {
     }
     window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
     window.orderFront(nil)
+    // AppKit constrains windows to the available screen height. Leave room
+    // for window chrome so this check also works on a laptop-only display.
+    let tallHeight = min(CGFloat(820), (window.screen ?? NSScreen.main)!.visibleFrame.height - 60)
     func resizeCheck(_ mode: String, height: CGFloat) {
       owner.repositoryController.setMode(mode)
       window.setContentSize(NSSize(width: 1200, height: height))
@@ -70,7 +73,7 @@ func runFlowChecks() throws {
         "\(mode) retains requested window height \(height) after layout")
     }
     for mode in ["Log", "Commit", "Console", "Reviews"] {
-      resizeCheck(mode, height: 820)
+      resizeCheck(mode, height: tallHeight)
       resizeCheck(mode, height: 640)
     }
     let terminal = owner.repositoryController.terminalWorkspace

@@ -479,6 +479,42 @@ final class DiffAndGraphTests {
     XCTAssertEqual(disconnected[1].lane, 0)
   }
 
+  func testGraphProjectionAcrossHiddenMergeAndOldBoundary() {
+    let commits = [
+      Commit(hash: "tip", parents: ["hidden-a", "hidden-b", "old-0"], author: "T", subject: "Merge"),
+      Commit(hash: "middle", parents: ["old-0"], author: "T", subject: "Middle"),
+      Commit(hash: "root", parents: [], author: "T", subject: "Root"),
+    ]
+    var topology = [
+      CommitAncestry(hash: "tip", parents: commits[0].parents),
+      CommitAncestry(hash: "hidden-a", parents: ["middle", "root"]),
+      CommitAncestry(hash: "hidden-b", parents: ["root", "middle"]),
+      CommitAncestry(hash: "middle", parents: ["old-0"]),
+      CommitAncestry(hash: "root", parents: []),
+    ]
+    // The old tail contributes ancestry ranks but no visible edge. Hidden
+    // merges must retain first-parent order and deduplicate their destinations.
+    for index in 0..<12_000 {
+      topology.append(CommitAncestry(hash: "old-\(index)",
+        parents: index == 11_999 ? [] : ["old-\(index + 1)"]))
+    }
+    for source in [topology, topology.reversed().map { $0 }] {
+      let rows = CommitGraph.layout(commits, topology: source, heads: ["tip"])
+      XCTAssertEqual(rows.map(\.lane), [0, 0, 0])
+      XCTAssertEqual(rows.map(\.laneCount), [2, 2, 1])
+      XCTAssertEqual(rows.map(\.color), [0, 0, 1])
+      XCTAssertEqual(rows.map(\.incoming), [false, true, true])
+      XCTAssertTrue(rows[0].isMerge)
+      XCTAssertEqual(rows[0].edges.map(\.from), [0, 0])
+      XCTAssertEqual(rows[0].edges.map(\.to), [0, 1])
+      XCTAssertEqual(rows[0].edges.map(\.color), [0, 1])
+      XCTAssertEqual(rows[1].edges.map(\.from), [1])
+      XCTAssertEqual(rows[1].edges.map(\.to), [0])
+      XCTAssertEqual(rows[1].edges.map(\.color), [1])
+      XCTAssertTrue(rows[2].edges.isEmpty)
+    }
+  }
+
   func testGraphConnectionsMeetCommitCenters() {
     // A short merged branch, as in new-api: the side commit is immediately
     // below the merge and converges on the main lane at the common ancestor.
