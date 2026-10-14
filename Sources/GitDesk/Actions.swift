@@ -91,22 +91,13 @@ extension RepositoryController {
     popup(menu)
   }
   func showBranchMenu() {
-    let menu = NSMenu()
-    menu.addItem(
-      menuItem("New Branch…", enabled: repository != nil) { [weak self] in self?.newBranch() })
-    menu.addItem(
-      menuItem("Checkout Tag or Revision…", enabled: repository != nil) { [weak self] in
-        self?.checkoutRevision()
-      })
-    menu.addItem(.separator())
-    for branch in snapshot?.branches ?? [] {
-      let item = NSMenuItem(
-        title: branch.name + (branch.current ? "  (Current)" : ""), action: nil, keyEquivalent: "")
-      item.submenu = branchMenu(branch)
-      menu.addItem(item)
-    }
-    popup(menu, anchor: branchLabel)
+    guard repository != nil, !isBusy else { return }
+    if let picker = headerBranchPicker { picker.close() }
+    let picker = BranchPicker(owner: self)
+    headerBranchPicker = picker
+    picker.show(anchor: branchLabel)
   }
+
   func branchContextMenu() -> NSMenu {
     if let branch = selectedBranch { return branchMenu(branch) }
     if !selectedBranches.isEmpty {

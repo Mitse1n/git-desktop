@@ -166,6 +166,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
   let logSearch = FlatSearchField(frame: .zero)
   let statusLabel = label("Open a Git repository to begin", color: Theme.muted, size: 11)
   let repoLabel = HeaderMenuButton("GitDesk", kind: .repository)
+  var headerBranchPicker: BranchPicker?
   let branchLabel = HeaderMenuButton("No branch", kind: .branch)
   let repositoryHeader = RepositoryHeader()
   var headerControls: NSStackView!

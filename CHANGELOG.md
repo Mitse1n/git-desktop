@@ -16,6 +16,8 @@ Notable changes are recorded here. The project is in early development; the app 
 
 ### Added
 
+- IDEA-style header branch popup with action/reference search, grouped local/remote branches, upstream labels, current/favorite markers, keyboard navigation, and popup settings.
+
 - Embedded SwiftTerm PTY terminal with persistent repository sessions, and native GitHub/GitLab collaboration panels covering PR/MR browsing, local review diffs, checkout, creation/drafts, comments/line threads, review decisions, reviewer requests, merge/state changes, CI checks and snippet sharing. Hosting tokens are validated and stored in macOS Keychain; self-hosted services are configurable.
 
 - Display theme-aware file-type SVG icons in historical diffs, working changes, and revision file trees, keeping Git status colors on filenames.

@@ -351,6 +351,48 @@ do {
   precondition(favorites.contains("refs/heads/main") && favorites.contains(remoteRefs[0]))
   precondition(favorites.contains("refs/heads/master") && favorites.contains("refs/remotes/origin/master"))
   let branches = try repo.branches()
+  let controller = RepositoryController()
+  controller.repository = repo
+  controller.snapshot = try repo.snapshot()
+  let picker = BranchPicker(owner: controller)
+  precondition(picker.entries.prefix(3).map(\.title) == ["Update Project…", "Commit…", "Push…"])
+  precondition(!picker.entries.contains { $0.title.hasPrefix("HEAD (") })
+  precondition(picker.entries[picker.table.selectedRow].branch?.current == true)
+  if let path = ProcessInfo.processInfo.environment["GITDESK_BRANCH_POPUP_SNAPSHOT"],
+    let window = picker.table.window, let content = window.contentView {
+    window.setContentSize(NSSize(width: 440, height: 520))
+    content.layoutSubtreeIfNeeded()
+    let bitmap = content.bitmapImageRepForCachingDisplay(in: content.bounds)!
+    content.cacheDisplay(in: content.bounds, to: bitmap)
+    try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: path))
+  }
+  picker.search.stringValue = "CHECKOUT"
+  picker.rebuild()
+  precondition(picker.entries.contains { $0.title == "Checkout Tag or Revision…" })
+  precondition(picker.entries.contains { $0.branch?.name.contains("checkout-7") == true })
+  precondition(!picker.entries.contains { $0.branch?.current == true })
+  picker.search.stringValue = "no-such-branch-or-action"
+  picker.rebuild()
+  precondition(picker.entries.count == 1 && !picker.entries[0].enabled)
+  picker.search.stringValue = ""
+  picker.rebuild()
+  let localIndex = picker.entries.firstIndex { $0.path == "/Local" }!
+  picker.table.selectRowIndexes(IndexSet(integer: localIndex), byExtendingSelection: false)
+  func pickerKey(_ code: UInt16) {
+    picker.table.keyDown(with: NSEvent.keyEvent(with: .keyDown, location: .zero,
+      modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil,
+      characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: code)!)
+  }
+  pickerKey(123)
+  precondition(!picker.entries.contains { $0.branch?.kind == .local })
+  pickerKey(124)
+  precondition(picker.entries.contains { $0.branch?.current == true })
+  let remoteIndex = picker.entries.firstIndex { $0.path == "/Remote" }!
+  picker.table.selectRowIndexes(IndexSet(integer: remoteIndex), byExtendingSelection: false)
+  pickerKey(126)
+  precondition(picker.entries[picker.table.selectedRow].branch?.kind == .local,
+    "Keyboard navigation skips separators")
+  print("Branch popup: action/ref search, current selection, empty results, collapse/expand and keyboard checks passed")
   let tree = BranchTree.build(branches, favorites: favorites)
   let local = tree.first { $0.title == "Local" }!
   let origin = tree.first { $0.title == "Remote" }!.children.first!

@@ -1,3 +1,15 @@
+## 2026-10-14 顶部分支选择弹窗
+
+- 对照 JetBrains 源码的 [GitBranchesPopupBase](https://github.com/JetBrains/intellij-community/blob/master/plugins/git4idea/shared/src/com/intellij/vcs/git/branch/popup/GitBranchesPopupBase.kt)、[GitBranchesTreeSingleRepoModel](https://github.com/JetBrains/intellij-community/blob/master/plugins/git4idea/shared/src/com/intellij/vcs/git/branch/tree/GitBranchesTreeSingleRepoModel.kt) 和 [GitDefaultBranchesTreeRenderer](https://github.com/JetBrains/intellij-community/blob/master/plugins/git4idea/shared/src/com/intellij/vcs/git/branch/popup/GitDefaultBranchesTreeRenderer.kt)，在 AppKit 中实现同一弹窗内的操作搜索、分支树、单击展开分组、上游名称、当前分支默认选中和收藏标记。没有引入 IntelliJ 的 JVM UI 依赖。
+- 顶部包含 Update Project / Commit / Push，随后为 New Branch / Checkout Tag or Revision；下方为 Local / Remote 和可选 Tags。目录分组与标签选项独立保存，不改变 Log 的分支筛选。
+- Update Project 调用项目已有的 fast-forward-only pull；分支操作复用现有菜单。保留 GitDesk 的现有操作语义，并非移植 IDEA 的全部更新策略、多仓库及最近分支功能。
+- 使用 Computer Use 在 `/tmp/gitdesk-branch-popup-demo` 打开新版本，确认搜索输入自动聚焦、当前分支和上游显示、收藏及文件夹图标、操作分隔线、本地/远程搜索结果，以及 Escape 关闭弹窗。原生 NSMenu 出现时 ScreenCaptureKit 返回参数错误，未将该菜单截图作为视觉验证依据。
+- `scripts/test.sh` 通过：52 个核心场景及 UI/流程检查；新增检查覆盖操作与分支联合搜索、无匹配结果、初始选中、目录折叠/展开和跳过分隔线的键盘导航。
+- `scripts/build-app.sh debug`、`codesign --verify --deep --strict dist/GitDesk.app` 和 `git diff --check` 通过。现有 `showsBaselineSeparator` 弃用警告与本次改动无关。
+- 下图通过实际 AppKit 视图离屏渲染生成；可用 `GITDESK_BRANCH_POPUP_SNAPSHOT="$PWD/docs/gitdesk-branch-popup.png" ./scripts/test.sh` 重现。
+
+![分支弹窗的 AppKit 渲染](gitdesk-branch-popup.png)
+
 # 调查与验证记录
 
 ## 2026-10-14 恢复紧凑提交图
