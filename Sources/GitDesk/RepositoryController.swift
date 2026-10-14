@@ -6,6 +6,9 @@ final class LogSubjectCell: NSView, LogExpandableCell {
   var showTagNames = false
   var referencesOnLeft = false
   var dimMerge = true
+  var graph: GraphRow?
+  var graphColumnWidth: CGFloat = 0
+  var isHead = false
   var commit: Commit? {
     didSet {
       needsDisplay = true
@@ -29,7 +32,8 @@ final class LogSubjectCell: NSView, LogExpandableCell {
       ?? refs.first { !$0.hasPrefix("tag: ") } ?? refs.first
     var visible = compactReferences ? primary.map { [$0] } ?? [] : refs
     if showTagNames { visible += refs.filter { $0.hasPrefix("tag: ") && !visible.contains($0) } }
-    var left: CGFloat = 5
+    let messageStart = 5 + max(0, (graph.map { GraphCell.requiredWidth(lanes: $0.laneCount) } ?? 0) - graphColumnWidth)
+    var left = messageStart
     for name in visible.reversed() {
       let fullName = name.replacingOccurrences(of: "HEAD -> ", with: "").replacingOccurrences(
         of: "tag: ", with: "")
@@ -38,14 +42,14 @@ final class LogSubjectCell: NSView, LogExpandableCell {
       let stacked = compactReferences && (refs.count > 1 || name.hasPrefix("HEAD -> "))
       let iconWidth: CGFloat = stacked ? 22 : 17
       let width = min(210, (clean as NSString).size(withAttributes: attrs).width + iconWidth)
-      if right - width < 70 { break }
+      if right - width - left < 70 { break }
       let rect = NSRect(x: referencesOnLeft ? left : right - width, y: 5, width: width, height: 18)
       badges.append(ReferenceBadge(name: name, title: clean, rect: rect,
         iconWidth: iconWidth, stacked: stacked))
-      right -= width + 5
-      left += width + 5
+      if referencesOnLeft { left += width + 5 } else { right -= width + 5 }
     }
-    return (badges, NSRect(x: referencesOnLeft ? left : 5, y: 6, width: max(0, right - 10), height: 18))
+    let messageX = referencesOnLeft ? left : messageStart
+    return (badges, NSRect(x: messageX, y: 6, width: max(0, right - messageX - 5), height: 18))
   }
   var hoverText: LogHoverText? {
     guard let commit else { return nil }
@@ -55,6 +59,14 @@ final class LogSubjectCell: NSView, LogExpandableCell {
   }
   override func draw(_ dirtyRect: NSRect) {
     guard let commit else { return }
+    // The graph has a small shared base column; wider rows continue into
+    // the subject cell. Only this row's text moves, like IDEA's log renderer.
+    if let graph {
+      NSGraphicsContext.saveGraphicsState()
+      bounds.clip()
+      GraphCell.draw(graph, isHead: isHead, height: bounds.height, offsetX: -graphColumnWidth)
+      NSGraphicsContext.restoreGraphicsState()
+    }
     let layout = textLayout(for: commit)
     for badge in layout.badges {
       let rect = badge.rect
@@ -211,6 +223,9 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
   }
   var compactReferences = UserDefaults.standard.object(forKey: "logCompactReferences") as? Bool ?? true {
     didSet { UserDefaults.standard.set(compactReferences, forKey: "logCompactReferences") }
+  }
+  var showLongGraphEdges = UserDefaults.standard.bool(forKey: "logShowLongEdges") {
+    didSet { UserDefaults.standard.set(showLongGraphEdges, forKey: "logShowLongEdges") }
   }
   var showLogTagNames = UserDefaults.standard.bool(forKey: "logShowTagNames") {
     didSet { UserDefaults.standard.set(showLogTagNames, forKey: "logShowTagNames") }
@@ -791,6 +806,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     isBusy = true
     progress.startAnimation(nil)
     statusLabel.stringValue = "Opening \(url.lastPathComponent)…"
+    let showLongEdges = showLongGraphEdges
     let showIgnored = showIgnoredFiles
     queue.async { [weak self] in
       do {
@@ -803,7 +819,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
           }
         }
         let data = try repo.snapshot(filter: openingFilter)
-        let presentation = RepositoryHistoryPresentation.prepare(data)
+        let presentation = RepositoryHistoryPresentation.prepare(data, showLongEdges: showLongEdges)
         let ignored = showIgnored ? try repo.ignoredPaths() : []
         let modules = CommitModule.discover(in: repo.workingDirectory)
         let userEmail = (try? repo.run(["config", "user.email"]).trimmingCharacters(in: .whitespacesAndNewlines)) ?? ""
@@ -861,6 +877,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     let currentEpoch = epoch
     let filter = self.filter
     let previous = logOnly ? snapshot : nil
+    let showLongEdges = showLongGraphEdges
     let showIgnored = showIgnoredFiles
     let previousIgnored = ignoredPaths
     let previousModules = commitModules
@@ -881,7 +898,7 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
         let ignored = previous != nil ? previousIgnored : (showIgnored ? try repo.ignoredPaths() : [])
         let modules = previous != nil ? previousModules : CommitModule.discover(in: repo.workingDirectory)
         let changed = priorSnapshot != data || previousIgnored != ignored || previousModules != modules
-        let presentation = RepositoryHistoryPresentation.prepare(data, reusing: priorPresentation)
+        let presentation = RepositoryHistoryPresentation.prepare(data, reusing: priorPresentation, showLongEdges: showLongEdges)
         DispatchQueue.main.async {
           guard let self else { return }
           self.isRefreshing = false
@@ -983,12 +1000,12 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
     let selectedHashes = Set(logTable.selectedRowIndexes.compactMap { index in
       displayedLogCommits.indices.contains(index) ? displayedLogCommits[index].hash : nil
     })
-    let prepared = presentation ?? RepositoryHistoryPresentation.prepare(data, reusing: historyPresentation)
+    let prepared = presentation.flatMap { $0.showLongEdges == showLongGraphEdges ? $0 : nil }
+      ?? RepositoryHistoryPresentation.prepare(data, reusing: historyPresentation, showLongEdges: showLongGraphEdges)
     assert(prepared.matches(data))
     historyPresentation = prepared
     graphs = prepared.graphs
-    logTable.graphLaneCounts = graphs.map(\.laneCount)
-    logTable.graphWidth = CGFloat(min(10, CommitGraph.recommendedLaneCount(graphs))) * 15 + 8
+    logTable.graphWidth = GraphCell.requiredWidth(lanes: min(10, CommitGraph.recommendedLaneCount(graphs)))
     logTable.authorWidth = min(140, max(80, data.commits.map {
       ($0.author as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 13, weight: .semibold)]).width + 12
     }.max() ?? 80))
@@ -1186,6 +1203,9 @@ final class RepositoryController: NSViewController, NSTableViewDataSource, NSTab
         cell.showTagNames = showLogTagNames
         cell.referencesOnLeft = referencesOnLeft
         cell.dimMerge = highlightMergeCommits
+        cell.graph = graphs[rowIndex]
+        cell.graphColumnWidth = logTable.graphWidth
+        cell.isHead = commit.decorations.contains { $0 == "HEAD" || $0.hasPrefix("HEAD -> ") }
         cell.commit = commit
         return cell
       }

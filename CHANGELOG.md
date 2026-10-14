@@ -28,6 +28,8 @@ Notable changes are recorded here. The project is in early development; the app 
 
 - IDEA-inspired diff refinements implemented in Swift/AppKit: multiple file/line selection, per-side copy, a multi-file chooser, multiline-aware syntax colors, separate inline edit highlights in both layouts, change connectors, and F7/Shift-F7 navigation. Group/file selections are deduplicated, and syntax work is cached and cancellable.
 
+- IDEA-style compact history graphs: fold edges spanning 30 or more displayed rows into endpoint arrows, repack visible tracks, show continuation arrows at page boundaries, and persist the Long Edges view option. Let wide rows extend into the subject cell with per-row text/hover insets and use a subdued branch palette.
+
 - IDEA-style branch-tree hover highlights and full-name expansion over neighboring panes, bounded by the window. Horizontal scrolling follows expanded branch widths and preserves the scroll position on refresh; collapse and filtering reclaim unused space.
 
 - Four IDEA-inspired themes (Island Dark, Island Light, Light, Dark) with live application-wide switching in Appearance settings (⌘,) and View → Theme, persisted preferences, light/dark diff and syntax colors, and rounded outer Island tool windows. Switching preserves repository state, selected commits/files, drafts, and loaded diffs.

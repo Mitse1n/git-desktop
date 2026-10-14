@@ -792,12 +792,35 @@ extension RepositoryController {
     displayedCurrentBranchHighlight = shouldHighlightCurrentBranch
     logTable.reloadKeepingSelection()
   }
+  func toggleLongGraphEdges() {
+    showLongGraphEdges.toggle()
+    guard let data = snapshot else { return }
+    let showLongEdges = showLongGraphEdges
+    let prior = historyPresentation
+    let currentEpoch = epoch
+    queue.async { [weak self] in
+      let presentation = RepositoryHistoryPresentation.prepare(data, reusing: prior, showLongEdges: showLongEdges)
+      DispatchQueue.main.async {
+        guard let self, self.epoch == currentEpoch, self.snapshot.map({ presentation.matches($0) }) == true,
+          self.showLongGraphEdges == showLongEdges else { return }
+        let origin = self.logTable.enclosingScrollView?.contentView.bounds.origin
+        self.updateUI(presentation: presentation)
+        if let origin, let scroll = self.logTable.enclosingScrollView {
+          scroll.contentView.scroll(to: origin)
+          scroll.reflectScrolledClipView(scroll.contentView)
+        }
+      }
+    }
+  }
   func logViewOptions(anchor: NSView? = nil) {
     let menu = NSMenu()
     menu.addItem(NSMenuItem.sectionHeader(title: "Show"))
     menu.addItem(option("Compact References View", checked: compactReferences) { [weak self] in
       self?.compactReferences.toggle()
       self?.reloadLogAppearance()
+    })
+    menu.addItem(option("Long Edges", checked: showLongGraphEdges) { [weak self] in
+      self?.toggleLongGraphEdges()
     })
     menu.addItem(option("Tag Names", checked: showLogTagNames) { [weak self] in
       self?.showLogTagNames.toggle()
@@ -934,6 +957,7 @@ extension RepositoryController {
     guard let values = prompt("Go to Hash / Branch / Tag", fields: [("Revision", "")]),
       !values[0].isEmpty, let repo = repository
     else { return }
+    let showLongEdges = showLongGraphEdges
     let previousSnapshot = snapshot
     let currentEpoch = epoch
     queue.async { [weak self] in
@@ -947,7 +971,7 @@ extension RepositoryController {
             operation: old.operation, history: old.history, graphAncestry: old.graphAncestry,
             hasMoreCommits: page.hasMore)
         }
-        let presentation = previousSnapshot.map { RepositoryHistoryPresentation.prepare(replacingLog($0)) }
+        let presentation = previousSnapshot.map { RepositoryHistoryPresentation.prepare(replacingLog($0), showLongEdges: showLongEdges) }
         DispatchQueue.main.async {
           guard let self, self.epoch == currentEpoch else { return }
           if let index = commits.firstIndex(where: { $0.hash == hash }) {
